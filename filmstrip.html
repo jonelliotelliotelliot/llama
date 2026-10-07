@@ -1,0 +1,6 @@
+<!doctype html><meta charset=utf-8><style>body{margin:0;display:grid;grid-template-columns:repeat(3,1fr);gap:0;font:11px sans-serif}
+div{position:relative}iframe{width:100%;height:380px;border:0;display:block}span{position:absolute;top:4px;right:6px;color:#999}</style>
+<script>
+const q=new URLSearchParams(location.search), sp=q.get('speed')||'2', n=+(q.get('n')||8);
+for(let i=0;i<n;i++){const p=(i/n).toFixed(3);document.write(`<div><iframe src="index.html?speed=${sp}&phase=${p}&zoom=3"></iframe><span>${p}</span></div>`)}
+</script>

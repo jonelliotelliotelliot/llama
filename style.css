@@ -1,0 +1,125 @@
+/* Llama Playground — styles */
+/* soft cursors (desktop): a rounded arrow, and a hand over llamas and the panel's controls.
+   The numbers are each image's hotspot; the keywords after them are fallbacks. */
+:root {
+  --cursor: url(cursors/arrow.svg) 2 2, auto;
+  --cursor-hand: url(cursors/hand.svg) 6 2, pointer;
+}
+html, body, canvas { cursor: var(--cursor); }
+body.over-llama canvas, #panel select, #panel input[type=checkbox], #panel .close { cursor: var(--cursor-hand); }
+html, body { margin: 0; height: 100%; background: #fff; overflow: hidden; overscroll-behavior: none; }
+/* touch: no text-selection, long-press menus or tap highlights getting in the way of holding a llama */
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+canvas { display: block; touch-action: none; }
+#label {
+  position: fixed; top: 20px; left: 24px;
+  font: 15px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  color: #c8c8c8; user-select: none; pointer-events: none;
+}
+.heart {
+  position: fixed; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none;
+  animation: heart-float 1.3s ease-out forwards;
+}
+@keyframes heart-float {
+  from { translate: 0 0; scale: 0.3; opacity: 0; }
+  15% { scale: 1.15; opacity: 1; }
+  to { translate: var(--dx) -90px; scale: 0.9; opacity: 0; }
+}
+#panel-toggle, #panel {
+  position: fixed; top: 14px; right: 14px; z-index: 10;
+  font: 12px/1.3 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; color: #666;
+}
+#panel-toggle {
+  background: #fff; border: 1px solid #e6e6e6; border-radius: 8px; padding: 6px 10px; cursor: var(--cursor-hand);
+}
+#panel-toggle:hover { border-color: #ccc; }
+#panel {   /* flat, a little see-through (no blur: it stays graphic) */
+  width: 220px; background: rgba(255,255,255,0.8); border: 1px solid rgba(0,0,0,0.07); border-radius: 10px;
+  padding: 10px 12px 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.04); display: none;
+}
+#panel.open { display: block; }
+#panel h4 {
+  margin: 10px 0 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #aaa;
+}
+#panel h4:first-of-type { margin-top: 0; }
+#panel .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+#panel .row label { width: 52px; flex: none; }
+#panel input[type=range] { flex: 1; min-width: 0; accent-color: #555; }
+#panel input[type=checkbox] { accent-color: #555; }
+#panel select {
+  flex: 1; min-width: 0; font: inherit; color: #555; padding: 2px 4px;
+  background: rgba(0,0,0,0.035); border: 1px solid rgba(0,0,0,0.07); border-radius: 6px;
+}
+#panel input[type=color] {
+  width: 22px; height: 22px; padding: 0; border: 1px solid #e0e0e0; border-radius: 50%; background: none; cursor: var(--cursor-hand);
+}
+#panel input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+#panel input[type=color]::-webkit-color-swatch { border: none; border-radius: 50%; }
+#panel .llama-row span { flex: 1; }
+#panel .buttons { display: flex; gap: 6px; margin-top: 8px; }
+#panel button {
+  flex: 1; font: inherit; color: #555; background: rgba(0,0,0,0.035); border: 1px solid rgba(0,0,0,0.07); border-radius: 6px;
+  padding: 5px 0; cursor: var(--cursor-hand);
+}
+#panel button:hover:not(:disabled) { background: rgba(0,0,0,0.06); }
+#panel button:disabled { opacity: 0.4; cursor: var(--cursor); }
+#panel .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+@media (pointer: coarse) {   /* touch: roomier rows and bigger targets for fingers */
+  #panel { width: 250px; }
+  #panel .row { margin: 9px 0; }
+  #panel input[type=checkbox] { width: 20px; height: 20px; }
+  #panel input[type=color] { width: 28px; height: 28px; }
+  #panel button { padding: 9px 0; }
+  #panel-toggle { padding: 9px 14px; }
+}
+#panel .close { flex: none; width: auto; padding: 0 6px; background: none; border: none; font-size: 14px; color: #aaa; }
+/* gather: the herd counter as a speech bubble above your llama */
+#herd-bubble {
+  position: fixed; left: 0; top: 0; pointer-events: none; z-index: 5;
+  display: flex; gap: 6px; align-items: center; padding: 7px 10px;
+  background: #fff; border: 1px solid #e4e4e4; border-radius: 12px;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.06);
+  transform-origin: 50% 100%; opacity: 0; scale: 0.4;
+  transition: opacity 0.25s, scale 0.35s cubic-bezier(.3,1.6,.5,1);
+}
+#herd-bubble.show { opacity: 1; scale: 1; }
+#herd-bubble::after, #herd-bubble::before, #hold-tip::after, #hold-tip::before, #poke-tip::after, #poke-tip::before { /* the little pointer tail */
+  content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
+  border: 6px solid transparent; border-top-color: #e4e4e4;
+}
+#herd-bubble::after, #hold-tip::after, #poke-tip::after { border-width: 5px; border-top-color: #fff; }
+/* gather: time's nearly up — the counter pulses */
+#herd-bubble.hurry { animation: hurry 0.45s ease-in-out infinite alternate; }
+@keyframes hurry { to { scale: 1.12; } }
+#herd-bubble i {
+  width: 11px; height: 11px; border-radius: 50%; box-sizing: border-box; border: 1px solid #d6d6d6;
+}
+#herd-bubble i.on { border-color: transparent; animation: dot-in 0.4s cubic-bezier(.3,1.8,.5,1); }
+#herd-bubble.done i { animation: dot-pop 0.6s ease-out both; }
+#herd-bubble b { font: 13px/1 -apple-system, sans-serif; color: #e9505e; animation: dot-in 0.4s cubic-bezier(.3,1.8,.5,1); }
+@keyframes dot-in { from { scale: 0; } }
+@keyframes dot-pop { 40% { scale: 1.7; } }
+/* gather: "hold to herd" bubble above the llama you point at; its bar fills while you hold */
+#hold-tip, #poke-tip {
+  position: fixed; left: 0; top: 0; pointer-events: none; z-index: 5;
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 7px 10px 8px;
+  background: #fff; border: 1px solid #e4e4e4; border-radius: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.06);
+  font: 11px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; color: #999; white-space: nowrap;
+  transform-origin: 50% 100%; opacity: 0; scale: 0.4;
+  transition: opacity 0.2s, scale 0.3s cubic-bezier(.3,1.6,.5,1);
+}
+#hold-tip.show, #poke-tip.show { opacity: 1; scale: 1; }
+#hold-tip b { color: #e9505e; font-weight: normal; }
+#hold-tip i { font-style: normal; color: #666; }
+/* sfx: "poke me" over your llama until the first click (browsers only allow sound after one) */
+#poke-tip.show { animation: wiggle 1.8s ease-in-out infinite; }
+@keyframes wiggle { 0%, 70%, 100% { rotate: 0deg; } 80% { rotate: -5deg; } 90% { rotate: 5deg; } }
+#hold-tip .bar { align-self: stretch; min-width: 64px; height: 5px; border-radius: 3px; background: #eee; overflow: hidden; }
+#hold-tip .bar i { display: block; height: 100%; width: 0; border-radius: 3px; }
+#hold-tip.done { animation: tip-pop 0.35s ease-out forwards; }
+@keyframes tip-pop { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 1.3; } }
+#hint {
+  position: fixed; bottom: 24px; width: 100%; text-align: center;
+  font: 13px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  color: #bbb; user-select: none; pointer-events: none; transition: opacity 1s;
+}
