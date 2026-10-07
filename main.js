@@ -4,6 +4,7 @@
 // Served over http (see start.command): browsers won't load a module from a file:// page.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import * as CANNON from 'cannon-es';   // piles: the physics for the toppling stacks
 
 // ---------- review params ----------
 // ?speed=4   walk at a fixed speed in profile (camera follows)
@@ -223,6 +224,10 @@ function render() {
       : i < llamas.length + balls.length ? balls[i - llamas.length].pos : loose[i - llamas.length - balls.length].tr.pos;
     if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.z < z0) z0 = p.z; if (p.z > z1) z1 = p.z;
   }
+  if (piles) for (const { body: b } of piles.pieces) { // piles: the pieces' shadows too
+    if (b.position.x < x0) x0 = b.position.x; if (b.position.x > x1) x1 = b.position.x;
+    if (b.position.z < z0) z0 = b.position.z; if (b.position.z > z1) z1 = b.position.z;
+  }
   if (ramp) { // ramp: its shadow is covered too
     const e = RAMP_LEN / 2 + RAMP_H * 0.3;
     x0 = Math.min(x0, ramp.x - e); x1 = Math.max(x1, ramp.x + e); z0 = Math.min(z0, ramp.z - e); z1 = Math.max(z1, ramp.z + e);
@@ -312,7 +317,7 @@ function onPointerMove(e) {
   const near = llamaAt(e.clientX, e.clientY, true);
   for (const l of llamas) l.hovered = l === near;
   pointerOn = llamaAt(e.clientX, e.clientY, false);
-  document.body.classList.toggle('over-llama', !!pointerOn);   // the hand cursor (style.css)
+  document.body.classList.toggle('over-llama', !!pointerOn || !!pieceAt());   // the hand cursor (style.css) — piles: fallen pieces too
   // pet: a gentle stroke over a llama (moving, not too fast, not pressing) soothes it
   // (touch: a finger rubbing it, which turns its press into a stroke rather than a hold)
   const now = performance.now(), stroke = Math.hypot(e.clientX - petX, e.clientY - petY), pace = stroke / Math.max(1, now - petAt);
@@ -363,7 +368,9 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   }
   setRay(e);
   const hit = llamaAt(e.clientX, e.clientY, false);
+  const piece = !hit && pieceAt();                      // piles: a fallen piece
   if (hit) press = { llama: hit, t: 0, x: e.clientX, y: e.clientY, claimed: false };
+  else if (piece) tapPiece(piece);
   else if (ray.ray.intersectPlane(ground, _drop) && !onRamp(_drop.x, _drop.z, 1)) { // ramp: no balls inside it
     const now = performance.now();
     // mouse: a click drops a ball; touch: a double-tap does (a single tap just walks there)
@@ -750,6 +757,21 @@ const sfx = {
     const [v, pan] = at, t = actx.currentTime, g = CHIME_VOL * v * (mine ? 1 : 0.5);
     [7, 8, 7, 8, 7, 8, 7].forEach((d, i) => sfxNote(t + i * 0.045, pan, d, g * (1 - i * 0.08), 0.1));
     sfxNote(t + 0.38, pan, 12, g, 0.5);
+  },
+  // piles: a piece landing or bumping — a soft wooden tok (blocks), a duller thud (balls), a tick (cone, stick)
+  // piles: a piece popped by a click — a soft rising bloop
+  pop(pos) {
+    const at = sfxAt(pos); if (!at) return;
+    const [v, pan] = at, t = actx.currentTime;
+    sfxTone(t, pan, { from: 260, to: 560, gain: 0.07 * v, decay: 0.09 });
+    sfxHiss(t, pan, { type: 'bandpass', freq: 1400, q: 2, gain: 0.02 * v, decay: 0.03 });
+  },
+  knock(pos, kind, k) {
+    const at = sfxAt(pos); if (!at) return;
+    const [v, pan] = at, t = actx.currentTime, r = 0.9 + Math.random() * 0.2;
+    const f = (kind === 'box' ? 420 : kind === 'ball' ? 210 : 650) * r;
+    sfxTone(t, pan, { from: f, to: f * 0.6, gain: 0.07 * v * k, decay: kind === 'ball' ? 0.08 : 0.05 });
+    sfxHiss(t, pan, { type: 'bandpass', freq: f * 3, q: 4, gain: 0.03 * v * k, decay: 0.03 });
   },
   // poked into a happy dance: a bouncy jingle on its three pronks (0.12, 0.74, 1.36)
   dance(pos) {
@@ -1287,7 +1309,8 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   let startleT = 0, startleYaw = 0; // hit by a ball: stopped short, looking where it came from
   let shakeIn = -1, shakeT = -1;  // rain: a shake-off after a shower (countdown to it, then its timeline)
   let dance = null;               // { t } – pronking happy dance
-  let goalBall = null;           // ball being walked to
+  let goalBall = null;           // ball being walked to (or, piles: a piece someone clicked)
+  let pieceGoal = null;           // piles: a piece it's been asked to kick
   let act = null;                 // { t, ball, bx, bz, side } – a kick in progress
 
   // hit by a ball: stops short with a big startled jump (or scrambles up if lying down), perks
@@ -1303,6 +1326,12 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     if (speed > 2) puff(llama.position.x, llama.position.y, llama.position.z, 4); // dust: skids
     speed *= 0.35;                                  // pulls up short
     startleYaw = wrap(Math.atan2(-(from.z - llama.position.z), from.x - llama.position.x) - heading);
+  }
+  // piles: asked to kick a piece — walks to it and kicks it, just like a ball
+  function dropPieceGoal() {
+    const i = pieceGoal ? piles.targets.indexOf(pieceGoal) : -1;
+    if (i >= 0) piles.targets.splice(i, 1);
+    pieceGoal = null; if (goalBall?.piece) goalBall = null;
   }
   function poke(quiet = false) {
     if (!mine && !quiet) sfx.boop(llama.position); // sfx: (yours: its hop makes the sound)
@@ -1420,8 +1449,9 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       if ((petHum -= dt) < 0) { sfx.hum(llama.position); petHum = 2.2 + Math.random() * 0.8; } // sfx:
     }
 
-    if (!act) goalBall = FIXED_SPEED === null && !self.followLeader /* gather: in line, ignore balls */
-      ? nearestBall(id, llama.position.x, llama.position.z, goalBall) : null;
+    if (pieceGoal && (pieceGoal.t += dt) > 12) dropPieceGoal();       // piles: couldn't get there, never mind
+    if (!act) goalBall = pieceGoal ?? (FIXED_SPEED === null && !self.followLeader /* gather: in line, ignore balls */
+      ? nearestBall(id, llama.position.x, llama.position.z, goalBall) : null);
     if (goalBall && kushT > 0 && kushDir !== -1) kushDir = -1; // a ball is worth getting up for
 
     const still = speed < 0.05 && Math.abs(omega) < 0.05 && !dance && hopT < 0 && !act && !goalBall;
@@ -1452,11 +1482,16 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       const t0 = act.t, t = (act.t += dt);
       const at = (k) => t0 < k && t >= k; // fires once when the timeline passes k
       // wind up, punt it (a little off-straight), watch it go
-      if (at(0.38)) { sfx.kick(act.ball.pos); kickBall(act.ball, heading + (Math.random() - 0.5) * 0.5, 26, self); perk = 1; } // sfx:
+      if (at(0.38)) {
+        sfx.kick(act.ball.pos);                                    // sfx:
+        if (act.ball.piece) { kickPiece(act.ball.piece, heading + (Math.random() - 0.5) * 0.4); dropPieceGoal(); } // piles:
+        else kickBall(act.ball, heading + (Math.random() - 0.5) * 0.5, 26, self);
+        perk = 1;
+      }
       if (at(1.0)) smile = 1;
       if (t > KICK_LEN) act = null;
     }
-    if (goalBall && !balls.includes(goalBall)) goalBall = null; // gone (by us or someone else)
+    if (goalBall && !goalBall.piece && !balls.includes(goalBall)) goalBall = null; // gone (by us or someone else)
     startleT = Math.max(0, startleT - dt);
     // rain: shower over — after a moment, a quick full-body shake, flinging off a few droplets
     if (shakeIn > 0 && (shakeIn -= dt) <= 0) {
@@ -1790,6 +1825,8 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     pet(px) { pet = Math.min(1, pet + px / 250); },      // pet: px of gentle stroking
     shakeOff(delay) { shakeIn = delay; },               // rain: shake off after this many seconds
     canGreet: () => brain.canGreet?.() ?? false,         // greet: (wanderers only)
+    canKick: () => !act && !pieceGoal && !self.followLeader && kushT === 0 && !dance && pet < 0.15, // piles:
+    kickPiece(t) { pieceGoal = t; if (kushT > 0) kushDir = -1; },
     startGreet: (o, first) => brain.startGreet(o, first),
     celebrate() { if (kushT > 0) kushDir = -1; dance = { t: 0 }; hopT = -1; }, // gather: finale dance
   });
@@ -1867,7 +1904,7 @@ function renderLlamaList() {
     pick.value = hex(l.coat);
     pick.addEventListener('input', () => l.setCoat(pick.value));
     const name = document.createElement('span');
-    name.textContent = l === player ? 'yours' : l.name;
+    name.textContent = l === player ? 'You' : l.name;
     row.append(pick, name);
     list.append(row);
   }
@@ -2004,6 +2041,185 @@ function updatePaint(dt) {
   mesh.instanceColor.needsUpdate = true;
 }
 
+// ---------- piles (physics) ----------
+// A couple of toy-block stacks — blocks, balls, a stick and a party-hat cone — built from real
+// physics (cannon-es). Any llama walking into one topples it; after that the pieces just get
+// nudged about and spread around by whoever passes. They never tidy themselves back up.
+// Kicked balls knock them too. Each llama is an invisible solid box (body and legs, plus one for
+// the neck and head) that moves with it; resting pieces sleep, so a settled pile costs nothing.
+// To remove: set PILES = false (or delete this section, the cannon-es import/import-map line and
+// the small hooks marked "piles:").
+const PILES = FIXED_SPEED === null;
+const PILE_COUNT = 2;
+const PILE_COLS = { peach: 0xf3d3b5, blush: 0xe6a39e, sage: 0xc3c8aa, stick: 0xefc59a };
+const PILE_GRAVITY = 40;   // (the world is big: a stronger pull keeps falls from looking floaty)
+const PILE_SHOVE = 7;      // the most a llama passes on when it walks into a piece (so a gallop nudges, not flings)
+let piles = null;          // { world, pieces: [{ body, mesh, kind }], llamaBodies: Map, ballBodies: Map }
+if (PILES) {
+  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -PILE_GRAVITY, 0) });
+  world.allowSleep = true;
+  world.defaultContactMaterial.friction = 0.5;
+  world.defaultContactMaterial.restitution = 0.08;
+  const floor = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
+  floor.quaternion.setFromEuler(-Math.PI / 2, 0, 0);       // (a plane faces +z; turn it to face up)
+  world.addBody(floor);
+  // ramp: solid too — its flat top, and a slab along the slope
+  if (ramp) {
+    const x0 = -RAMP_LEN / 2, a = Math.atan2(RAMP_H, RAMP_SLOPE), len = Math.hypot(RAMP_SLOPE, RAMP_H), t = 1;
+    const body = new CANNON.Body({ type: CANNON.Body.STATIC });
+    body.addShape(new CANNON.Box(new CANNON.Vec3(RAMP_TOP / 2, RAMP_H / 2, RAMP_W / 2)), new CANNON.Vec3(RAMP_LEN / 2 - RAMP_TOP / 2, RAMP_H / 2, 0));
+    body.addShape(new CANNON.Box(new CANNON.Vec3(len / 2, t / 2, RAMP_W / 2)),
+      new CANNON.Vec3(x0 + RAMP_SLOPE / 2 + Math.sin(a) * t / 2, RAMP_H / 2 - Math.cos(a) * t / 2, 0),
+      new CANNON.Quaternion().setFromEuler(0, 0, a));
+    body.position.set(ramp.x, 0, ramp.z);
+    body.quaternion.setFromEuler(0, ramp.rot, 0);
+    world.addBody(body);
+  }
+  piles = { world, pieces: [], llamaBodies: new Map(), ballBodies: new Map(), heard: 0, targets: [], fallen: [] };
+  // llamas push without any bounce
+  const pieceMat = new CANNON.Material('piece'), shoveMat = piles.shoveMat = new CANNON.Material('llama');
+  world.addContactMaterial(new CANNON.ContactMaterial(pieceMat, shoveMat, { friction: 0.3, restitution: 0 }));
+  // where: in view, clear of the ramp (and the run-up to its slope) and the paint, apart from each other
+  const spots = [], p = new THREE.Vector3(), v = new THREE.Vector3();
+  const rampClear = (x, z) => !ramp || (!onRamp(x, z, 9) && !((([lx, lz]) => lx < -RAMP_LEN / 2 && lx > -RAMP_LEN / 2 - 24 && Math.abs(lz) < RAMP_W / 2 + 7)(rampLocal(x, z))));
+  for (let i = 0; i < 400 && spots.length < PILE_COUNT; i++) {
+    randomGroundPoint(p, { x: 0, z: 0 }, 12);
+    if (!rampClear(p.x, p.z)) continue;
+    if (paint && paint.blobs.some(([bx, bz, r]) => Math.hypot(p.x - bx, p.z - bz) < r + 7)) continue;
+    if (spots.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 22)) continue;
+    v.set(p.x, 6, p.z).project(camera);
+    if (Math.abs(v.x) > 0.8 || Math.abs(v.y) > 0.8) continue;
+    spots.push(p.clone());
+  }
+  // the pieces: [kind, local x, y, z, size, colour]; the stack is turned to a random angle
+  const PILE = [
+    ['box', -1.0, 0.9, 0, 1.8], ['box', -1.0, 2.7, 0, 1.8], ['box', -1.0, 4.5, 0, 1.8], ['ball', -1.0, 6.35, 0, 0.95, 'peach'],
+    ['box', 1.0, 0.9, 0.3, 1.8], ['ball', 0.95, 2.7, 0.3, 0.9, 'sage'], ['ball', 1.2, 0.9, -1.75, 0.9, 'sage'],
+    ['cone', -2.7, 0.95, -0.9, 0.75], ['stick', 2.25, 1.55, 0.3, 0.24],
+  ];
+  // the cone's stripes
+  const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+  const g = cv.getContext('2d'); g.fillStyle = '#e6a39e'; g.fillRect(0, 0, 64, 64); g.fillStyle = '#f3d3b5';
+  for (let y = 4; y < 64; y += 16) g.fillRect(0, y, 64, 7);
+  const coneTex = new THREE.CanvasTexture(cv); coneTex.colorSpace = THREE.SRGBColorSpace;
+  const boxMats = [PILE_COLS.blush, PILE_COLS.peach, PILE_COLS.blush, PILE_COLS.blush, PILE_COLS.peach, PILE_COLS.blush].map(mat);
+  for (const [pileIx, c] of spots.entries()) {
+    const turn = Math.random() * Math.PI * 2, ct = Math.cos(turn), st = Math.sin(turn);
+    for (const [kind, lx, ly, lz, size, col] of PILE) {
+      let shape, geo, material, q = new CANNON.Quaternion();
+      if (kind === 'box') { shape = new CANNON.Box(new CANNON.Vec3(size / 2, size / 2, size / 2)); geo = new THREE.BoxGeometry(size, size, size); material = boxMats; }
+      else if (kind === 'ball') { shape = new CANNON.Sphere(size); geo = new THREE.SphereGeometry(size, 20, 14); material = mat(PILE_COLS[col]); }
+      else if (kind === 'cone') { shape = new CANNON.Cylinder(0.02, size, 1.9, 16); geo = new THREE.ConeGeometry(size, 1.9, 24); material = new THREE.MeshBasicMaterial({ map: coneTex }); }
+      else { shape = new CANNON.Cylinder(size, size, 2.9, 10); geo = new THREE.CapsuleGeometry(size, 2.9 - 2 * size, 4, 10); material = mat(PILE_COLS.stick); q.setFromEuler(0, 0, 0.62); }
+      const body = new CANNON.Body({ mass: kind === 'stick' ? 0.4 : 1, shape, material: pieceMat,
+        linearDamping: kind === 'ball' ? 0.45 : 0.3, angularDamping: kind === 'ball' ? 0.7 : 0.45 }); // (balls: don't roll off forever)
+      body.sleepSpeedLimit = 0.4; body.sleepTimeLimit = 0.5;
+      body.position.set(c.x + lx * ct + lz * st, ly, c.z - lx * st + lz * ct);
+      const yaw = new CANNON.Quaternion().setFromEuler(0, turn, 0);
+      body.quaternion.copy(yaw.mult(q));
+      world.addBody(body);
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.castShadow = true;
+      scene.add(mesh);
+      const piece = { body, mesh, kind, pile: pileIx };
+      body.addEventListener('collide', (e) => pileKnock(piece, e));
+      piles.pieces.push(piece);
+    }
+  }
+  // let them settle into place before anyone sees them, then put them to sleep
+  for (let i = 0; i < 120; i++) world.step(1 / 60);
+  for (const q of piles.pieces) q.home = q.body.position.clone();
+  piles.fallen = spots.map(() => false);
+  for (const { body } of piles.pieces) body.sleep();
+  syncPiles();
+}
+function syncPiles() {
+  for (const { body, mesh } of piles.pieces) { mesh.position.copy(body.position); mesh.quaternion.copy(body.quaternion); }
+}
+// sfx: a soft wooden tok when a piece lands or knocks into something (not too many at once)
+function pileKnock(piece, e) {
+  const hit = Math.abs(e.contact.getImpactVelocityAlongNormal());
+  if (hit < 2.5 || !actx) return;
+  const now = performance.now();
+  if (now - piles.heard < 45) return;
+  piles.heard = now;
+  sfx.knock(piece.mesh.position, piece.kind, Math.min(1, hit / 18));
+}
+const _pv = new CANNON.Vec3();
+// each llama (and each flying ball) is a solid that moves with it, so it shoves pieces as it goes
+function llamaBody(l) {
+  let b = piles.llamaBodies.get(l);
+  if (!b) {
+    b = new CANNON.Body({ type: CANNON.Body.KINEMATIC, allowSleep: false, material: piles.shoveMat });   // (a sleeping one wouldn't shove)
+    b.addShape(new CANNON.Box(new CANNON.Vec3(2.4, 2.0, 1.05)), new CANNON.Vec3(-0.2, 2.2, 0));   // body and legs
+    b.addShape(new CANNON.Box(new CANNON.Vec3(0.75, 1.9, 0.65)), new CANNON.Vec3(2.4, 6.0, 0));   // neck and head
+    piles.world.addBody(b);
+    piles.llamaBodies.set(l, b);
+  }
+  return b;
+}
+function updatePiles(dt) {
+  if (!piles || dt <= 0) return;
+  for (const [l, b] of piles.llamaBodies) if (!llamas.includes(l)) { piles.world.removeBody(b); piles.llamaBodies.delete(l); }
+  for (const l of llamas) {
+    const b = llamaBody(l), p = l.group.position;
+    _pv.set(p.x, p.y, p.z);
+    b.velocity.set((_pv.x - b.position.x) / dt, (_pv.y - b.position.y) / dt, (_pv.z - b.position.z) / dt);
+    const sp = b.velocity.length();
+    if (sp > 60) b.velocity.set(0, 0, 0);                                            // (a teleport, not a shove)
+    else if (sp > PILE_SHOVE) b.velocity.scale(PILE_SHOVE / sp, b.velocity);        // gentle, even at a gallop
+    b.position.copy(_pv);
+    b.quaternion.setFromEuler(0, l.group.rotation.y, 0);
+  }
+  for (const [ball, b] of piles.ballBodies) if (!loose.includes(ball)) { piles.world.removeBody(b); piles.ballBodies.delete(ball); }
+  for (const ball of loose) {
+    let b = piles.ballBodies.get(ball);
+    if (!b) { b = new CANNON.Body({ type: CANNON.Body.KINEMATIC, allowSleep: false, shape: new CANNON.Sphere(BALL_R) }); b.position.set(ball.tr.pos.x, ball.y, ball.tr.pos.z); piles.world.addBody(b); piles.ballBodies.set(ball, b); }
+    b.velocity.set(ball.vx, ball.vy, ball.vz);
+    b.position.set(ball.tr.pos.x, ball.y, ball.tr.pos.z);
+  }
+  piles.world.step(1 / 60, dt, 3);
+  // a pile counts as knocked over once any of its pieces has moved off its spot
+  for (const q of piles.pieces) if (!piles.fallen[q.pile] && q.body.position.distanceTo(q.home) > 0.6) piles.fallen[q.pile] = true;
+  for (const t of piles.targets) t.pos.set(t.piece.body.position.x, 0, t.piece.body.position.z);
+  syncPiles();
+}
+
+// Click (or tap) a piece from a knocked-over pile: either it gives a little pop into the air, or
+// the nearest free llama ambles over and kicks it (half the time each; a pop if nobody's free).
+const _pieceHit = [];
+function pieceAt() {                                   // the clickable piece under the pointer (ray already set)
+  if (!piles) return null;
+  _pieceHit.length = 0;
+  ray.intersectObjects(piles.pieces.map((q) => q.mesh), false, _pieceHit);
+  const q = _pieceHit.length && piles.pieces.find((p) => p.mesh === _pieceHit[0].object);
+  return q && piles.fallen[q.pile] ? q : null;
+}
+function popPiece(q) {
+  const b = q.body;
+  b.wakeUp();
+  b.velocity.set((Math.random() - 0.5) * 5, 9 + Math.random() * 3, (Math.random() - 0.5) * 5);
+  b.angularVelocity.set((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
+  puff(b.position.x, 0, b.position.z, 5);              // dust:
+  sfx.pop(q.mesh.position);
+}
+function kickPiece(q, heading) {                       // (from a llama's kick, at the moment its foot connects)
+  const b = q.body, c = Math.cos(heading), s = Math.sin(heading);
+  b.wakeUp();
+  b.velocity.set(c * 12, 7, -s * 12);
+  b.angularVelocity.set((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10);
+}
+function tapPiece(q) {
+  pointerIdle = 0;
+  if (piles.targets.some((t) => t.piece === q)) return;          // someone's already on their way
+  const free = llamas.filter((l) => l.canKick() && l.group.position.distanceTo(q.mesh.position) < 40);
+  if (!free.length || Math.random() < 0.5) { popPiece(q); return; }
+  const l = free.reduce((a, b) => (a.group.position.distanceTo(q.mesh.position) < b.group.position.distanceTo(q.mesh.position) ? a : b));
+  const t = { piece: q, pos: new THREE.Vector3(q.body.position.x, 0, q.body.position.z), claimedBy: null, by: l, t: 0 };
+  piles.targets.push(t);
+  l.kickPiece(t);
+}
+
 // ---------- grass (decoration) ----------
 // A few sparse tufts of grass, some with tiny square flowers on the tips. Flat and minimal: thin
 // curved blades and square dots, always facing the camera, kept at least a couple of pixels
@@ -2020,6 +2236,7 @@ if (GRASS) {
   for (let tries = 0; tufts.length < GRASS_TUFTS && tries < 400; tries++) {
     randomGroundPoint(p, { x: 0, z: 0 }, 0);
     if (onRamp(p.x, p.z, 3)) continue;                                            // ramp: not on it
+    if (piles && piles.pieces.some((q) => Math.hypot(q.body.position.x - p.x, q.body.position.z - p.z) < 5)) continue; // piles: clear of them
     if (paint && paint.blobs.some(([bx, bz, r]) => Math.hypot(p.x - bx, p.z - bz) < r + 3)) continue; // paint: nor in it
     if (tufts.some((t) => Math.hypot(t.x - p.x, t.z - p.z) < 12)) continue;      // sparse
     const n = 3 + Math.floor(Math.random() * 3), flowers = Math.random() < 0.6 ? Math.random() * 0.7 : 0;
@@ -2114,7 +2331,7 @@ const RAIN = FIXED_SPEED === null;
 const RAIN_EVERY = [60, 120];    // seconds between showers (on screen: the clock pauses when the page is hidden)
 const RAIN_LEN = [20, 32];       // how long one lasts (easing in and out)
 const RAIN_DROPS = 280;          // streaks at the heaviest
-const RAIN_TINT = 0.06;          // how much the light dims at the heaviest (0 = not at all)
+const RAIN_TINT = 0.16;          // how much the light dims at the heaviest (0 = not at all)
 const RIPPLE_CAP = 140, RIPPLE_LIFE = 0.75;
 const DROPLET_COL = new THREE.Color(0x9fb3c8);
 let rainOn = RAIN, rainWait = 40 + Math.random() * 40, rainT = -1, rainLen = 0, rainK = 0; // rainK: 0 dry … 1 heaviest
@@ -2535,6 +2752,7 @@ function step(dt) {
   updateMusic(dt);                  // music:
   gatherStep(dt);
   for (const l of llamas) l.update(dt);
+  updatePiles(dt);                  // piles:
 }
 
 // ---------- loop ----------
