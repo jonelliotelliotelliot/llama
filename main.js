@@ -743,6 +743,14 @@ const sfx = {
       o.stop(t + 1.25);
     }
   },
+  // rain: shaking off — a quick wobbly trill that shakes itself out and lands on a bright note
+  // (yours at full voice, the herd's softer, so a field of them shaking off cascades gently)
+  shake(pos, mine) {
+    const at = sfxAt(pos); if (!at) return;
+    const [v, pan] = at, t = actx.currentTime, g = CHIME_VOL * v * (mine ? 1 : 0.5);
+    [7, 8, 7, 8, 7, 8, 7].forEach((d, i) => sfxNote(t + i * 0.045, pan, d, g * (1 - i * 0.08), 0.1));
+    sfxNote(t + 0.38, pan, 12, g, 0.5);
+  },
   // poked into a happy dance: a bouncy jingle on its three pronks (0.12, 0.74, 1.36)
   dance(pos) {
     const at = sfxAt(pos); if (!at) return;
@@ -1277,6 +1285,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   let hopT = -1;                  // single happy hop, seconds (-1 = not hopping)
   let hopBig = 1;                 // how high that hop goes (a ball hit: higher)
   let startleT = 0, startleYaw = 0; // hit by a ball: stopped short, looking where it came from
+  let shakeIn = -1, shakeT = -1;  // rain: a shake-off after a shower (countdown to it, then its timeline)
   let dance = null;               // { t } – pronking happy dance
   let goalBall = null;           // ball being walked to
   let act = null;                 // { t, ball, bx, bz, side } – a kick in progress
@@ -1449,7 +1458,16 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     }
     if (goalBall && !balls.includes(goalBall)) goalBall = null; // gone (by us or someone else)
     startleT = Math.max(0, startleT - dt);
-    const busy = kushT > 0 || dance !== null || act !== null || pet > 0.15 || startleT > 0; // (pet: pauses as soon as you start stroking)
+    // rain: shower over — after a moment, a quick full-body shake, flinging off a few droplets
+    if (shakeIn > 0 && (shakeIn -= dt) <= 0) {
+      if (kushT === 0 && !dance) {
+        shakeT = 0;
+        sfx.shake(llama.position, mine);                // sfx: its own little jingle
+        puff(llama.position.x, llama.position.y + 4.6, llama.position.z, 10, { col: DROPLET_COL, r: 0.09, v: 3, vy: 2.5, g: 14, spread: 1.4 });
+      }
+    }
+    if (shakeT >= 0 && (shakeT += dt) > 0.9) shakeT = -1;
+    const busy = kushT > 0 || dance !== null || act !== null || pet > 0.15 || startleT > 0 || shakeT >= 0; // (pet: pauses as soon as you start stroking)
 
     // --- steering: walk to a ball if there is one, else wherever the brain wants to go ---
     const goal = goalBall ? goalBall.pos : (brain.goal || llama.position);
@@ -1621,7 +1639,8 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     hopY += danceY;
     const wiggle = dance ? Math.sin(dance.t * 16) * smooth(PRONK * 3 - 0.2, PRONK * 3, dance.t) * (1 - smooth(DANCE_LEN - 0.3, DANCE_LEN, dance.t)) : 0;
     rig.position.y = yS + hopY + lift;
-    rig.rotation.set(rollS + wiggle * 0.08, 0, pitchS + tilt + Math.max(0, hopY) * (dance ? 0.03 : 0.08));
+    const shake = shakeT >= 0 ? Math.sin(shakeT * 38) * 0.16 * (1 - shakeT / 0.9) : 0; // rain: the shake-off
+    rig.rotation.set(rollS + wiggle * 0.08 + shake, 0, pitchS + tilt + Math.max(0, hopY) * (dance ? 0.03 : 0.08));
     // a single hop tucks the legs; pronking keeps them stiff (feet leave the ground with the body)
     if (hopY > 0) for (const [, leg] of legList) leg.fy += hopY * (dance ? 1 : 0.8);
 
@@ -1706,6 +1725,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
         + Math.sin(cyc * 2) * 0.05 * move + earFlop + Math.sin(ear.twitch * Math.PI) * 0.35
         // happy: ears perk forward and wiggle; dancing: they flap alternately
         - perk * 0.3 + perk * Math.sin(time * 28 + i * 2) * 0.12 + petS * 0.35 // pet: ears relax back
+        + rainK * 0.3 + (shakeT >= 0 ? Math.sin(shakeT * 38 + i * 2) * 0.35 : 0) // rain: ears down; flapping in the shake
         + (dance ? Math.sin(dance.t * 14 + i * Math.PI) * 0.4 : 0);
     }
 
@@ -1713,7 +1733,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     blinkT -= dt;
     const blink = blinkT < 0.12 && blinkT > 0 ? 0.1 : 1;
     if (blinkT < 0) blinkT = 2 + Math.random() * 4;
-    for (const e of eyes) e.scale.y = blink * (1 - 0.45 * smile) * (1 - 0.88 * petS); // happy squint; pet: eyes closed
+    for (const e of eyes) e.scale.y = blink * (1 - 0.45 * smile) * (1 - 0.88 * petS) * (1 - 0.45 * rainK); // happy squint; pet: eyes closed; rain: a squint
 
   }
 
@@ -1768,6 +1788,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   Object.assign(self, {
     group: llama, head, parts, update, poseLegs, poke, bonk, screenRect, setCoat, dispose, coat: coat.body,
     pet(px) { pet = Math.min(1, pet + px / 250); },      // pet: px of gentle stroking
+    shakeOff(delay) { shakeIn = delay; },               // rain: shake off after this many seconds
     canGreet: () => brain.canGreet?.() ?? false,         // greet: (wanderers only)
     startGreet: (o, first) => brain.startGreet(o, first),
     celebrate() { if (kushT > 0) kushDir = -1; dance = { t: 0 }; hopT = -1; }, // gather: finale dance
@@ -2081,6 +2102,143 @@ function updateGrass(dt) {
   pos.needsUpdate = true;
 }
 
+// ---------- rain (weather) ----------
+// Every few minutes a short shower drifts through: the light dims a touch, thin 1px streaks fall
+// at a slant with the wind, faint rings open where some land, and there's a soft hush of rain.
+// The llamas carry on, squinting a little with their ears down; when it stops, each shakes off.
+// Butterflies settle on a flower to wait it out. "Rain" in the panel turns showers on or off
+// (switching it on brings one along in a few seconds).
+// To remove: set RAIN = false (or delete this section, the #rain-tint markup/CSS and the small
+// hooks marked "rain:").
+const RAIN = FIXED_SPEED === null;
+const RAIN_EVERY = [60, 120];    // seconds between showers (on screen: the clock pauses when the page is hidden)
+const RAIN_LEN = [20, 32];       // how long one lasts (easing in and out)
+const RAIN_DROPS = 280;          // streaks at the heaviest
+const RAIN_TINT = 0.06;          // how much the light dims at the heaviest (0 = not at all)
+const RIPPLE_CAP = 140, RIPPLE_LIFE = 0.75;
+const DROPLET_COL = new THREE.Color(0x9fb3c8);
+let rainOn = RAIN, rainWait = 40 + Math.random() * 40, rainT = -1, rainLen = 0, rainK = 0; // rainK: 0 dry … 1 heaviest
+let rain = null;
+const rainTint = document.getElementById('rain-tint');
+try { if (localStorage.getItem('llama-rain') === 'off') rainOn = false; } catch {}
+if (RAIN) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(RAIN_DROPS * 6), 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setDrawRange(0, 0);
+  const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x9aa9bb, transparent: true, opacity: 0 }));
+  lines.frustumCulled = false;
+  scene.add(lines);
+  const ripples = new THREE.InstancedMesh(new THREE.RingGeometry(0.86, 1, 28).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ depthWrite: false }), RIPPLE_CAP);
+  ripples.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(RIPPLE_CAP * 3), 3);
+  ripples.frustumCulled = false;
+  ripples.count = 0;
+  ripples.renderOrder = -1;
+  scene.add(ripples);
+  rain = { lines, ripples, drops: [], rings: [], tick: 0, sound: null };
+  for (let i = 0; i < RAIN_DROPS; i++) rain.drops.push({ x: 0, y: -1, z: 0, v: 0 });
+}
+const RAIN_FALL = new THREE.Vector3(Math.cos(WIND) * 4, -34, -Math.sin(WIND) * 4); // a gentle slant with the wind
+const RAIN_STREAK = 1.3;
+// a new drop somewhere above the visible ground (a box around the view, stretched along the camera's
+// line of sight, since the tilted view sees further that way)
+function dropSpawn(d, high) {
+  const across = (Math.random() - 0.5) * VIEW * (innerWidth / Math.max(1, innerHeight)) * 1.2;
+  const along = (Math.random() - 0.5) * VIEW * 2.2;
+  const fx = camDir.x, fz = camDir.z, fl = Math.hypot(fx, fz) || 1;
+  d.x = (fx / fl) * along + (fz / fl) * across;
+  d.z = (fz / fl) * along - (fx / fl) * across;
+  d.y = high ? 18 + Math.random() * 22 : 30 + Math.random() * 10;
+  d.v = 0.9 + Math.random() * 0.25;
+}
+const _rm = new THREE.Matrix4(), _rc = new THREE.Color(), _rbg = new THREE.Color(), _rink = new THREE.Color(0x7d8ea4);
+function startRain() {
+  rainT = 0; rainLen = RAIN_LEN[0] + Math.random() * (RAIN_LEN[1] - RAIN_LEN[0]);
+  for (const d of rain.drops) dropSpawn(d, true);
+}
+function endRain() {
+  rainT = -1; rainK = 0;
+  rainWait = RAIN_EVERY[0] + Math.random() * (RAIN_EVERY[1] - RAIN_EVERY[0]);
+  for (const l of llamas) l.shakeOff(0.3 + Math.random() * 2.2);  // each in its own time
+}
+function updateRain(dt) {
+  if (!rain) return;
+  if (rainT < 0) { if (rainOn && (rainWait -= dt) <= 0) startRain(); }
+  else {
+    rainT += dt;
+    rainK = smooth(0, 5, rainT) * (1 - smooth(rainLen - 6, rainLen, rainT));
+    if (rainT > rainLen || (!rainOn && rainK < 0.02)) endRain();
+    if (!rainOn) rainLen = Math.min(rainLen, rainT + 3);  // switched off mid-shower: wind it down
+  }
+  rainTint.style.opacity = rainK * RAIN_TINT;
+  // the streaks
+  const n = Math.round(RAIN_DROPS * rainK), a = rain.lines.geometry.attributes.position.array;
+  const fl = RAIN_FALL.length(), sx = RAIN_FALL.x / fl * RAIN_STREAK, sy = RAIN_FALL.y / fl * RAIN_STREAK, sz = RAIN_FALL.z / fl * RAIN_STREAK;
+  for (let i = 0; i < n; i++) {
+    const d = rain.drops[i];
+    if (d.y < 0) dropSpawn(d, false);
+    d.x += RAIN_FALL.x * d.v * dt; d.y += RAIN_FALL.y * d.v * dt; d.z += RAIN_FALL.z * d.v * dt;
+    const floor = groundHeight(d.x, d.z);
+    if (d.y <= floor) {                                   // landed: now and then a ring opens there
+      if (Math.random() < 0.3 && (floor === 0 || floor === RAMP_H)) rain.rings.push({ x: d.x, y: floor + 0.02, z: d.z, t: 0, s: 0.5 + Math.random() * 0.5 });
+      dropSpawn(d, false);
+    }
+    a.set([d.x, d.y, d.z, d.x - sx, d.y - sy, d.z - sz], i * 6);
+  }
+  rain.lines.geometry.setDrawRange(0, n * 2);
+  rain.lines.geometry.attributes.position.needsUpdate = true;
+  rain.lines.material.opacity = 0.55 * Math.min(1, rainK * 2);
+  // the rings: grow, and melt into the ground colour
+  while (rain.rings.length > RIPPLE_CAP) rain.rings.shift();
+  for (let i = rain.rings.length - 1; i >= 0; i--) if ((rain.rings[i].t += dt) > RIPPLE_LIFE) rain.rings.splice(i, 1);
+  renderer.getClearColor(_rbg);
+  rain.rings.forEach((r, i) => {
+    const u = r.t / RIPPLE_LIFE, s = r.s * (0.2 + 0.8 * Math.sqrt(u));
+    rain.ripples.setMatrixAt(i, _rm.makeScale(s, 1, s).setPosition(r.x, r.y, r.z));
+    rain.ripples.setColorAt(i, _rc.copy(_rbg).lerp(_rink, 0.35 * (1 - u)));
+  });
+  rain.ripples.count = rain.rings.length;
+  rain.ripples.instanceMatrix.needsUpdate = true;
+  if (rain.ripples.instanceColor) rain.ripples.instanceColor.needsUpdate = true;
+  rainSound(dt);
+}
+// the "Rain" checkbox in the panel
+const rainIn = document.getElementById('rain');
+if (!RAIN) document.getElementById('rain-row').remove();
+else {
+  rainIn.checked = rainOn;
+  rainIn.addEventListener('change', () => {
+    rainOn = rainIn.checked;
+    try { localStorage.setItem('llama-rain', rainOn ? 'on' : 'off'); } catch {}
+    if (rainOn && rainT < 0) rainWait = 3;                      // switched on: one along shortly
+  });
+}
+// sfx: a soft hush (filtered noise, swelling with the shower) and the odd quiet drip
+function rainSound(dt) {
+  if (!actx || actx.state !== 'running' || !sfxNoise) return;
+  if (rainK > 0 && !rain.sound && sfxOn) {
+    const src = actx.createBufferSource(), hp = actx.createBiquadFilter(), lp = actx.createBiquadFilter(), g = actx.createGain();
+    src.buffer = sfxNoise; src.loop = true;
+    hp.type = 'highpass'; hp.frequency.value = 500;
+    lp.type = 'lowpass'; lp.frequency.value = 3200;
+    g.gain.value = 0;
+    src.connect(hp).connect(lp).connect(g).connect(sfxOut);
+    src.start();
+    rain.sound = { src, g };
+  }
+  if (!rain.sound) return;
+  rain.sound.g.gain.setTargetAtTime(sfxOn ? rainK * 0.03 : 0, actx.currentTime, 0.4);
+  if (rainK === 0 && rainT < 0) {                        // shower over: let it fade, then stop
+    const s = rain.sound; rain.sound = null;
+    s.g.gain.setTargetAtTime(0, actx.currentTime, 0.4);
+    s.src.stop(actx.currentTime + 2.5);
+  }
+  if (sfxOn && Math.random() < rainK * dt * 3) {          // a drip, somewhere
+    const t = actx.currentTime, f = 1800 + Math.random() * 1600;
+    sfxTone(t, (Math.random() - 0.5) * 1.2, { from: f, to: f * 0.7, gain: 0.006 * rainK, decay: 0.03 });
+  }
+}
+
 // ---------- butterflies (decoration) ----------
 // A couple of butterflies drift about, flapping, and every so often settle: on a grass flower,
 // or on the head of a llama that's standing still (they take off again if it moves).
@@ -2114,7 +2272,7 @@ const _fb = new THREE.Vector3(), _fd = new THREE.Vector3();
 function pickFlight(fl) {
   const flowers = grass ? grass.tufts.flatMap((t) => t.blades.filter((b) => b.flower).map((b) => ({ t, b }))) : [];
   const resting = llamas.filter((l) => l.group.position.distanceToSquared(l.lastPos ?? l.group.position) < 1e-6 && !l.petting);
-  const r = Math.random();
+  const r = rainK > 0.15 ? 0 : Math.random();            // rain: head for a flower to wait it out
   fl.spot = null;
   if (r < 0.45 && flowers.length) fl.spot = { flower: pick(flowers) };
   else if (r < 0.7 && resting.length) fl.spot = { llama: pick(resting) };
@@ -2134,7 +2292,7 @@ function updateButterflies(dt) {
     if (fl.state === 'rest') {
       spotPos(fl.spot, g.position);
       const l = fl.spot.llama, moved = l && (l.group.position.distanceToSquared(l.lastPos) > 1e-4 || l.petting);
-      if ((fl.rest -= dt) < 0 || moved) { pickFlight(fl); fl.v.set(0, 2, 0); }
+      if (((fl.rest -= dt) < 0 && rainK < 0.15) || moved) { pickFlight(fl); fl.v.set(0, 2, 0); } // (rain: stays put)
       // resting: wings mostly closed overhead, slowly fanning
       const a = 1.25 - 0.25 * (0.5 + 0.5 * Math.sin(fl.t * 2.5));
       fl.l.rotation.x = -a; fl.r.rotation.x = a;
@@ -2170,35 +2328,40 @@ const dust = [];
 let dustMesh = null;
 if (DUST) {
   dustMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 8, 6), new THREE.MeshBasicMaterial({ depthWrite: false }), DUST_CAP);
+  dustMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(DUST_CAP * 3), 3);
   dustMesh.frustumCulled = false;
   dustMesh.count = 0;
   scene.add(dustMesh);
 }
-// n dots, spreading from (x, y, z)
-function puff(x, y, z, n = 6) {
+// n dots, spreading from (x, y, z). Dust by default; `col`/`r`/`v`/`vy`/`g` make other kinds
+// (rain: water droplets flung off in a shake)
+function puff(x, y, z, n = 6, { col = null, r = 0.22, v = 1.6, vy = 0.6, g = 0, spread = 0.8 } = {}) {
   if (!dustMesh) return;
   for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2 + Math.random() * 0.6, v = 1.6 + Math.random() * 1.2;
-    dust.push({ x: x + Math.cos(a) * 0.8, y: y + 0.15, z: z - Math.sin(a) * 0.8, vx: Math.cos(a) * v, vz: -Math.sin(a) * v,
-      vy: 0.6 + Math.random() * 0.6, r: 0.22 + Math.random() * 0.16, t: 0 });
+    const a = (i / n) * Math.PI * 2 + Math.random() * 0.6, sp = v * (1 + Math.random() * 0.75);
+    dust.push({ x: x + Math.cos(a) * spread, y: y + 0.15, z: z - Math.sin(a) * spread, vx: Math.cos(a) * sp, vz: -Math.sin(a) * sp,
+      vy: vy * (1 + Math.random()), g, r: r * (1 + Math.random() * 0.7), col, t: 0 });
   }
   while (dust.length > DUST_CAP) dust.shift();
 }
-const _dm = new THREE.Matrix4(), _dc = new THREE.Color(), _dk = new THREE.Color(0x000000);
+const _dm = new THREE.Matrix4(), _dc = new THREE.Color(), _dk = new THREE.Color(0x000000), _dg = new THREE.Color();
 function updateDust(dt) {
   if (!dustMesh) return;
   for (let i = dust.length - 1; i >= 0; i--) if ((dust[i].t += dt) > DUST_LIFE) dust.splice(i, 1);
+  // dust: a soft grey that suits whatever colour the ground is
+  _dg.copy(renderer.getClearColor(_dc)).lerp(_dk, 0.12);
   dust.forEach((d, i) => {
     const drag = Math.exp(-5 * dt);
-    d.vx *= drag; d.vz *= drag; d.x += d.vx * dt; d.z += d.vz * dt; d.y += d.vy * dt;
+    d.vx *= drag; d.vz *= drag; d.vy -= d.g * dt;
+    d.x += d.vx * dt; d.z += d.vz * dt; d.y = Math.max(0.1, d.y + d.vy * dt);
     const s = d.r * (1 - smooth(0.15, 1, d.t / DUST_LIFE));
     _dm.makeScale(s, s, s).setPosition(d.x, d.y, d.z);
     dustMesh.setMatrixAt(i, _dm);
+    dustMesh.setColorAt(i, d.col ?? _dg);
   });
   dustMesh.count = dust.length;
   dustMesh.instanceMatrix.needsUpdate = true;
-  // a soft grey that suits whatever colour the ground is
-  dustMesh.material.color.copy(renderer.getClearColor(_dc)).lerp(_dk, 0.12);
+  dustMesh.instanceColor.needsUpdate = true;
 }
 
 // ---------- gather the herd (optional mini-goal) ----------
@@ -2367,6 +2530,7 @@ function step(dt) {
   updateGrass(dt);                  // grass:
   updateButterflies(dt);            // butterflies:
   updateDust(dt);                   // dust:
+  updateRain(dt);                   // rain:
   updatePokeTip(dt);                // sfx:
   updateMusic(dt);                  // music:
   gatherStep(dt);

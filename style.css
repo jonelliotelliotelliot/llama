@@ -123,3 +123,5 @@ canvas { display: block; touch-action: none; }
   font: 13px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
   color: #bbb; user-select: none; pointer-events: none; transition: opacity 1s;
 }
+/* rain: the light dims a touch during a shower (opacity set from main.js) */
+#rain-tint { position: fixed; inset: 0; background: #34404f; opacity: 0; pointer-events: none; z-index: 1; }
