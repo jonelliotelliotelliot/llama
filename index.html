@@ -2,10 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>Llama Playground</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #fff; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #fff; overflow: hidden; overscroll-behavior: none; }
+  /* touch: no text-selection, long-press menus or tap highlights getting in the way of holding a llama */
+  body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
   canvas { display: block; touch-action: none; }
   #label {
     position: fixed; top: 20px; left: 24px;
@@ -29,9 +31,9 @@
     background: #fff; border: 1px solid #e6e6e6; border-radius: 8px; padding: 6px 10px; cursor: pointer;
   }
   #panel-toggle:hover { border-color: #ccc; }
-  #panel {
-    width: 220px; background: #fff; border: 1px solid #e6e6e6; border-radius: 10px;
-    padding: 10px 12px 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.05); display: none;
+  #panel {   /* flat, a little see-through (no blur: it stays graphic) */
+    width: 220px; background: rgba(255,255,255,0.8); border: 1px solid rgba(0,0,0,0.07); border-radius: 10px;
+    padding: 10px 12px 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.04); display: none;
   }
   #panel.open { display: block; }
   #panel h4 {
@@ -49,12 +51,20 @@
   #panel .llama-row span { flex: 1; }
   #panel .buttons { display: flex; gap: 6px; margin-top: 8px; }
   #panel button {
-    flex: 1; font: inherit; color: #555; background: #f6f6f6; border: 1px solid #e6e6e6; border-radius: 6px;
+    flex: 1; font: inherit; color: #555; background: rgba(0,0,0,0.035); border: 1px solid rgba(0,0,0,0.07); border-radius: 6px;
     padding: 5px 0; cursor: pointer;
   }
-  #panel button:hover:not(:disabled) { background: #efefef; }
+  #panel button:hover:not(:disabled) { background: rgba(0,0,0,0.06); }
   #panel button:disabled { opacity: 0.4; cursor: default; }
   #panel .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  @media (pointer: coarse) {   /* touch: roomier rows and bigger targets for fingers */
+    #panel { width: 250px; }
+    #panel .row { margin: 9px 0; }
+    #panel input[type=checkbox] { width: 20px; height: 20px; }
+    #panel input[type=color] { width: 28px; height: 28px; }
+    #panel button { padding: 9px 0; }
+    #panel-toggle { padding: 9px 14px; }
+  }
   #panel .close { flex: none; width: auto; padding: 0 6px; background: none; border: none; font-size: 14px; color: #aaa; }
   /* gather: the herd counter as a speech bubble above your llama */
   #herd-bubble {
@@ -66,11 +76,14 @@
     transition: opacity 0.25s, scale 0.35s cubic-bezier(.3,1.6,.5,1);
   }
   #herd-bubble.show { opacity: 1; scale: 1; }
-  #herd-bubble::after, #herd-bubble::before, #hold-tip::after, #hold-tip::before { /* the little pointer tail */
+  #herd-bubble::after, #herd-bubble::before, #hold-tip::after, #hold-tip::before, #poke-tip::after, #poke-tip::before { /* the little pointer tail */
     content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
     border: 6px solid transparent; border-top-color: #e4e4e4;
   }
-  #herd-bubble::after, #hold-tip::after { border-width: 5px; border-top-color: #fff; }
+  #herd-bubble::after, #hold-tip::after, #poke-tip::after { border-width: 5px; border-top-color: #fff; }
+  /* gather: time's nearly up — the counter pulses */
+  #herd-bubble.hurry { animation: hurry 0.45s ease-in-out infinite alternate; }
+  @keyframes hurry { to { scale: 1.12; } }
   #herd-bubble i {
     width: 11px; height: 11px; border-radius: 50%; box-sizing: border-box; border: 1px solid #d6d6d6;
   }
@@ -80,7 +93,7 @@
   @keyframes dot-in { from { scale: 0; } }
   @keyframes dot-pop { 40% { scale: 1.7; } }
   /* gather: "hold to herd" bubble above the llama you point at; its bar fills while you hold */
-  #hold-tip {
+  #hold-tip, #poke-tip {
     position: fixed; left: 0; top: 0; pointer-events: none; z-index: 5;
     display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 7px 10px 8px;
     background: #fff; border: 1px solid #e4e4e4; border-radius: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.06);
@@ -88,7 +101,12 @@
     transform-origin: 50% 100%; opacity: 0; scale: 0.4;
     transition: opacity 0.2s, scale 0.3s cubic-bezier(.3,1.6,.5,1);
   }
-  #hold-tip.show { opacity: 1; scale: 1; }
+  #hold-tip.show, #poke-tip.show { opacity: 1; scale: 1; }
+  #hold-tip b { color: #e9505e; font-weight: normal; }
+  #hold-tip i { font-style: normal; color: #666; }
+  /* sfx: "poke me" over your llama until the first click (browsers only allow sound after one) */
+  #poke-tip.show { animation: wiggle 1.8s ease-in-out infinite; }
+  @keyframes wiggle { 0%, 70%, 100% { rotate: 0deg; } 80% { rotate: -5deg; } 90% { rotate: 5deg; } }
   #hold-tip .bar { align-self: stretch; min-width: 64px; height: 5px; border-radius: 3px; background: #eee; overflow: hidden; }
   #hold-tip .bar i { display: block; height: 100%; width: 0; border-radius: 3px; }
   #hold-tip.done { animation: tip-pop 0.35s ease-out forwards; }
@@ -110,6 +128,7 @@
 <div id="label">llama playground</div>
 <div id="herd-bubble"></div>
 <div id="hold-tip"><span></span><div class="bar"><i></i></div></div>
+<div id="poke-tip">poke me ♪</div>
 <div id="hint">move your cursor</div>
 <button id="panel-toggle">controls</button>
 <div id="panel">
@@ -119,7 +138,8 @@
   <div class="row"><label for="tilt">Tilt</label><input id="tilt" type="range" min="12" max="85" step="1"></div>
   <div class="row"><label for="bg">Ground</label><input id="bg" type="color" value="#ffffff"></div>
   <div class="row" id="sound-row"><label for="sound">Sound</label><input id="sound" type="checkbox" checked style="accent-color:#555">
-    <select id="tune" aria-label="Tune" style="flex:1;min-width:0;font:inherit;color:#555;background:#f6f6f6;border:1px solid #e6e6e6;border-radius:6px;padding:2px 4px"></select></div>
+    <select id="tune" aria-label="Tune" style="flex:1;min-width:0;font:inherit;color:#555;background:rgba(0,0,0,0.035);border:1px solid rgba(0,0,0,0.07);border-radius:6px;padding:2px 4px"></select></div>
+  <div class="row" id="music-row"><label for="music">Music</label><input id="music" type="checkbox" checked style="accent-color:#555"></div>
   <h4>Llamas</h4>
   <div id="llama-list"></div>
   <div class="buttons"><button id="add-llama">+ add</button><button id="remove-llama">− remove</button></div>
@@ -162,8 +182,10 @@ function coatFrom(body) {
   return { body: c.getHex(), far: new THREE.Color().setHSL(hsl.h, hsl.s, hsl.l < 0.3 ? hsl.l + 0.1 : hsl.l - 0.07).getHex() };
 }
 // coats offered to new llamas
-// the herd palette (plus black for yours): coral, blush, peach, sage, green
-const COAT_CHOICES = [0xe9505e, 0xf0a29e, 0xf6d2b2, 0xc3c8aa, 0x86ad96];
+// the herd palette (plus black for yours): coral, blush, peach, sage, green — the starting herd —
+// then, for llamas added in the panel: butter, dusty blue, terracotta, mauve, teal, oat
+const COAT_CHOICES = [0xe9505e, 0xf0a29e, 0xf6d2b2, 0xc3c8aa, 0x86ad96,
+                      0xf1d68e, 0xa3bccd, 0xd9886b, 0xc6a1b5, 0x6f9893, 0xe3d7c1];
 const COATS = {
   black:   { body: 0x000000, far: 0x2a2a2a },
 };
@@ -380,9 +402,19 @@ const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const ndc = new THREE.Vector2();
 const hint = document.getElementById('hint');
 let hasTarget = false;
+let petX = 0, petY = 0, petAt = 0; // pet: the last pointer sample, for stroke speed
 let pointerIdle = 0;           // seconds since the cursor last moved
 let pointerOn = null;          // the llama directly under the pointer, if any
 let lastPX = 0, lastPY = 0;
+// touch: there's no hover, so a finger leads the llama while it's down (a tap sends it there), a
+// double-tap drops a treat, rubbing a llama pets it (holding still still herds), two fingers pinch-zoom
+const TOUCH = matchMedia('(pointer: coarse)').matches;
+const touches = new Map();     // active touch points, by pointer id
+let pinch = null;              // { d, z }: finger spread and zoom when the pinch began
+let lastTap = null;            // { t, x, y }: the last tap on the ground, for double-taps
+const spread = () => { const [a, b] = [...touches.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+if (TOUCH) hint.textContent = 'drag to lead your llama';
+document.addEventListener('gesturestart', (e) => e.preventDefault()); // Safari: no page zoom
 
 function setRay(e) {
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
@@ -409,8 +441,13 @@ function llamaAt(x, y, withMargin) {
   return best;
 }
 
-addEventListener('pointermove', (e) => {
+function onPointerMove(e) {
   if (FIXED_SPEED !== null) return;
+  if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && touches.size >= 2) { setZoom(pinch.z * spread() / pinch.d); return; } // touch: pinch-zoom
+  }
+  if (pinch) return;
   if (e.target.closest?.('#panel, #panel-toggle')) { marker.visible = false; return; }
   if (Math.hypot(e.clientX - lastPX, e.clientY - lastPY) > 3) pointerIdle = 0;
   lastPX = e.clientX; lastPY = e.clientY;
@@ -419,6 +456,12 @@ addEventListener('pointermove', (e) => {
   for (const l of llamas) l.hovered = l === near;
   pointerOn = llamaAt(e.clientX, e.clientY, false);
   renderer.domElement.style.cursor = pointerOn ? 'pointer' : '';
+  // pet: a gentle stroke over a llama (moving, not too fast, not pressing) soothes it
+  // (touch: a finger rubbing it, which turns its press into a stroke rather than a hold)
+  const now = performance.now(), stroke = Math.hypot(e.clientX - petX, e.clientY - petY), pace = stroke / Math.max(1, now - petAt);
+  const stroking = !press || (press.claimed && e.pointerType !== 'mouse');
+  if (pointerOn && stroking && pace > 0.02 && pace < 1.4) pointerOn.pet(stroke);
+  petX = e.clientX; petY = e.clientY; petAt = now;
   // reaching for yours: keep the old target, so it doesn't turn and walk off. Over any other llama
   // the target still follows the pointer (yours walks up to it); only the marker hides.
   const keep = near === player;
@@ -431,7 +474,7 @@ addEventListener('pointermove', (e) => {
       // once they've played a little, hint that the llamas can be poked
       setTimeout(() => { hint.textContent = 'poke the llama'; hint.style.opacity = 1; }, 9000);
       setTimeout(() => { hint.style.opacity = 0; }, 13000);
-      setTimeout(() => { hint.textContent = 'click the ground to drop a treat'; hint.style.opacity = 1; }, 22000);
+      setTimeout(() => { hint.textContent = TOUCH ? 'double-tap the ground to drop a treat' : 'click the ground to drop a treat'; hint.style.opacity = 1; }, 22000);
       setTimeout(() => { hint.style.opacity = 0; }, 26000);
     }
     marker.visible = !pointerOn;
@@ -439,8 +482,13 @@ addEventListener('pointermove', (e) => {
     marker.quaternion.setFromUnitVectors(_up, groundNormal(target.x, target.z, _n)).multiply(_flat); // ramp: lie on the slope
     target.y = 0;
   }
+}
+addEventListener('pointermove', onPointerMove);
+document.addEventListener('pointerleave', (e) => {
+  if (e.pointerType !== 'touch') marker.visible = false;  // (touch: a finger lifting keeps the spot it chose)
+  pointerOn = null;
+  for (const l of llamas) l.hovered = false;
 });
-document.addEventListener('pointerleave', () => { marker.visible = false; pointerOn = null; for (const l of llamas) l.hovered = false; });
 const _drop = new THREE.Vector3();
 // Pressing a llama: a quick tap pokes it; holding is a "press" other features can claim
 // (gather the herd uses it to herd a llama). A press is cancelled if the pointer leaves it.
@@ -448,19 +496,39 @@ const TAP_MAX = 0.3;           // seconds: shorter than this counts as a tap
 let press = null;              // { llama, t, x, y, claimed }
 renderer.domElement.addEventListener('pointerdown', (e) => {
   if (FIXED_SPEED !== null) return;
+  const touch = e.pointerType === 'touch';
+  if (touch) {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.size === 2) { pinch = { d: Math.max(1, spread()), z: +zoomIn.value }; press = null; return; } // second finger: pinch
+    if (touches.size > 2) return;
+    petX = e.clientX; petY = e.clientY; petAt = performance.now();
+    onPointerMove(e);              // a finger going down is where the "cursor" is now: aim there
+  }
   setRay(e);
   const hit = llamaAt(e.clientX, e.clientY, false);
   if (hit) press = { llama: hit, t: 0, x: e.clientX, y: e.clientY, claimed: false };
-  else if (ray.ray.intersectPlane(ground, _drop) && !onRamp(_drop.x, _drop.z, 1)) { dropTreat(_drop.x, _drop.z); pointerIdle = 0; } // ramp: no treats inside it
+  else if (ray.ray.intersectPlane(ground, _drop) && !onRamp(_drop.x, _drop.z, 1)) { // ramp: no treats inside it
+    const now = performance.now();
+    // mouse: a click drops a treat; touch: a double-tap does (a single tap just walks there)
+    if (!touch || (lastTap && now - lastTap.t < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40)) {
+      dropTreat(_drop.x, _drop.z); pointerIdle = 0; lastTap = null;
+    } else lastTap = { t: now, x: e.clientX, y: e.clientY };
+  }
 });
-addEventListener('pointerup', () => {
-  if (press && !press.claimed && press.t < TAP_MAX) press.llama.poke();
+function pointerDone(e) {
+  touches.delete(e.pointerId);
+  if (touches.size < 2) pinch = null;
+  if (e.type === 'pointerup' && press && !press.claimed && press.t < TAP_MAX) press.llama.poke();
   press = null;
-});
+}
+addEventListener('pointerup', pointerDone);
+addEventListener('pointercancel', pointerDone);
 addEventListener('pointermove', (e) => {
   if (!press) return;
   const r = press.llama.screenRect();
-  if (!inRect(r, e.clientX, e.clientY, nearMargin(r))) press = null; // slid off the llama: cancel
+  if (!inRect(r, e.clientX, e.clientY, nearMargin(r))) { press = null; return; } // slid off the llama: cancel
+  // touch: a finger moving on it is a stroke (petting), not a hold — so it won't herd or poke
+  if (e.pointerType !== 'mouse' && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) press.claimed = true;
 });
 
 // ---------- behaviour (shared) ----------
@@ -687,7 +755,7 @@ function sfxStart() {
   const d = sfxNoise.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
 }
-if (SFX) for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, sfxStart);
+if (SFX) for (const ev of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) addEventListener(ev, sfxStart); // (iOS wants a touch's end)
 const _sp = new THREE.Vector3();
 // level and pan for a sound at a world position (off screen: silent)
 function sfxAt(pos) {
@@ -759,24 +827,47 @@ function sfxNotes(pos, degs, { gap = 0.07, gain = CHIME_VOL, decay = 0.22 } = {}
   const [v, pan] = at, t = actx.currentTime;
   degs.forEach((d, i) => sfxNote(t + i * gap, pan, d, gain * v, decay));
 }
-let stepDeg = 3;           // where the footstep melody is on the scale
 const sfx = {
-  // a footstep: one note, a gentle random walk on the scale that leans back to the middle;
-  // ramp: the middle rises with the height, so it climbs the scale as it climbs
+  // a footstep: a soft, muted tap on one pitch (so it stays out of the music's way); a touch
+  // higher and more knocky up on the ramp
   step(pos, height) {
-    const mid = 3 + Math.round((height / RAMP_H) * 6);
-    if (Math.random() < 0.8) stepDeg += Math.random() < 0.5 + (mid - stepDeg) * 0.15 ? 1 : -1;
-    stepDeg = clamp(stepDeg, mid - 2, mid + 2);
-    sfxNotes(pos, [stepDeg], { gain: CHIME_VOL * 0.7, decay: 0.16 });
+    const at = sfxAt(pos); if (!at) return;
+    const [v, pan] = at, t = actx.currentTime, r = 0.94 + Math.random() * 0.12;
+    sfxTone(t, pan, { from: (height > 0.05 ? 300 : 230) * r, to: 140, gain: 0.03 * v, decay: 0.035 });
+    sfxHiss(t, pan, { type: 'bandpass', freq: 1800 * r, q: 1.2, gain: 0.015 * v, decay: 0.015 });
   },
-  hop: (pos) => sfxNotes(pos, [4, 7]),
-  boop: (pos) => sfxNotes(pos, [7, 9], { gap: 0.06, gain: CHIME_VOL * 0.7 }),  // poking another llama: bip-bip                                         // boop-bip, up
+  hop: (pos) => sfxNotes(pos, [4, 7]),                                         // boop-bip, up
+  boop: (pos) => sfxNotes(pos, [7, 9], { gap: 0.06, gain: CHIME_VOL * 0.7 }),  // poking another llama: bip-bip
   pronk: (pos, k) => sfxNotes(pos, [5 + 2 * k]),                               // dance: up a step each bounce
   lieDown: (pos) => sfxNotes(pos, [4, 2, 0], { gap: 0.2, decay: 0.4, gain: CHIME_VOL * 0.8 }), // sleepy, down
   getUp: (pos) => sfxNotes(pos, [0, 2, 4], { gap: 0.09 }),
   herdJoin: (pos, n) => sfxNotes(pos, [2 + n, 4 + n]),                         // higher with each one herded
   herdLeave: (pos) => sfxNotes(pos, [6, 3]),
+  herdLost: (pos) => sfxNotes(pos, [6, 4, 2, 0], { gap: 0.13, decay: 0.35 }),  // time ran out: aww
   party: (pos) => sfxNotes(pos, [5, 7, 9, 10, 12], { gap: 0.08, decay: 0.3 }),
+  // pet: a contented llama's hum — a soft low "mm", two sines a hair apart, rising a touch then settling
+  hum(pos) {
+    const at = sfxAt(pos); if (!at) return;
+    const [v, pan] = at, t = actx.currentTime;
+    let f = noteHz(pick([0, 2, 4]));
+    while (f > 330) f /= 2;
+    for (const det of [1, 1.004]) {
+      const o = actx.createOscillator();
+      o.frequency.setValueAtTime(f * 0.96 * det, t);
+      o.frequency.linearRampToValueAtTime(f * det, t + 0.25);
+      o.frequency.linearRampToValueAtTime(f * 0.97 * det, t + 1.1);
+      sfxEnv(o, t, 0.045 * v, 0.25, 0.9, pan);
+      o.start(t);
+      o.stop(t + 1.25);
+    }
+  },
+  // poked into a happy dance: a bouncy jingle on its three pronks (0.12, 0.74, 1.36)
+  dance(pos) {
+    const at = sfxAt(pos); if (!at) return;
+    const [v, pan] = at, t = actx.currentTime;
+    const song = [[2, 0.12], [4, 0.2], [7, 0.74], [5, 0.82], [9, 1.36], [7, 1.44], [12, 1.95]];
+    song.forEach(([d, dt], i) => sfxNote(t + dt, pan, d, CHIME_VOL * v, i === song.length - 1 ? 0.6 : 0.22));
+  },
   // ramp: top reached — a little jingle, its notes landing on the dance's bounces (0.12, 0.74, 1.36)
   summit(pos) {
     const at = sfxAt(pos); if (!at) return;
@@ -801,6 +892,64 @@ const sfx = {
   },
 };
 
+// sfx: until the first click/tap/key there can be no sound, so a little "poke me" bubble floats
+// over your llama (poking it is that first click). Gone for good after any click or key.
+const pokeTip = document.getElementById('poke-tip');
+let pokeWait = SFX ? 2.5 : -1;          // seconds before it shows (-1: never / done)
+const _pt = new THREE.Vector3();
+if (SFX) for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => { pokeWait = -1; pokeTip.classList.remove('show'); });
+else pokeTip.remove();
+function updatePokeTip(dt) {
+  if (pokeWait < 0) return;                             // poked: gone
+  if ((pokeWait = Math.max(0, pokeWait - dt)) > 0) return; // shown: follows your llama every frame
+  player.head.getWorldPosition(_pt);
+  _pt.y += 2.6;
+  _pt.project(camera);
+  if (!Number.isFinite(_pt.x) || !innerWidth) return;   // no view yet (e.g. opened in a hidden tab)
+  pokeTip.style.translate = `calc(${(_pt.x * 0.5 + 0.5) * innerWidth}px - 50%) calc(${(-_pt.y * 0.5 + 0.5) * innerHeight}px - 100%)`;
+  pokeTip.classList.add('show');
+}
+
+// ---------- music ----------
+// A quiet tune that makes itself up as it goes, in the current scale: a soft melody wandering by
+// small steps, with unhurried, uneven timing and the odd rest, over a low note every few bars.
+// Plays once sound has started; "Music" in the panel turns it off.
+// To remove: set MUSIC = false (or delete this section and the hooks marked "music:").
+const MUSIC = SFX;
+const MUSIC_VOL = 0.025;
+let musicOn = MUSIC, musicOut = null;
+try { if (localStorage.getItem('llama-music') === 'off') musicOn = false; } catch {}
+const music = { wait: 1.5, deg: 3, n: 0 };
+// a note with a softer attack than the chimes (and an octave down for the high tunes)
+function musicNote(t, deg, gain, decay) {
+  if (!musicOut) { musicOut = actx.createGain(); musicOut.connect(sfxOut); }
+  const hz = noteHz(deg) * (tune.base > 400 ? 0.5 : 1);
+  for (const [mul, level, dm, wave] of tune.voice) {
+    const o = actx.createOscillator(), g = actx.createGain(), d = decay * dm;
+    o.type = wave;
+    o.frequency.value = hz * mul;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(gain * level, t + 0.06);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06 + d);
+    o.connect(g).connect(musicOut);
+    o.start(t);
+    o.stop(t + 0.1 + d);
+  }
+}
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+function updateMusic(dt) {
+  if (!musicOn || !sfxOn || !actx || actx.state !== 'running' || (music.wait -= dt) > 0) return;
+  const t = actx.currentTime + 0.05, n = tune.scale.length;
+  if (music.n % 8 === 0) musicNote(t, [0, 3, 1, 4][(music.n / 8) % 4] - n, MUSIC_VOL * 0.9, 4); // low note
+  if (Math.random() < 0.82) {                                    // melody (sometimes a rest)
+    music.deg += pick([-2, -1, -1, 0, 1, 1, 2]) + (music.deg < 2 ? 1 : music.deg > 7 ? -1 : 0);
+    music.deg = clamp(music.deg, 0, 9);
+    musicNote(t, music.deg, MUSIC_VOL, 1.6);
+  }
+  music.n++;
+  music.wait = pick([0.7, 0.7, 1.05, 1.05, 1.4, 2.1]);
+}
+
 // ---------- right of way ----------
 // Is a wanderer at `pos` in the way of your llama (in a corridor ahead of it, toward where it's
 // heading next)? If so, put a spot just off that corridor, on the side it's already on, in `out`.
@@ -823,6 +972,7 @@ function stepAside(pos, out) {
   if (onRamp(out.x, out.z, 2)) {                       // ramp: never onto it; straight away from yours instead
     const r = Math.hypot(rx, rz) || 1;
     out.set(pos.x + (rx / r) * ASIDE, 0, pos.z + (rz / r) * ASIDE);
+    if (onRamp(out.x, out.z, 2)) return false;         // (wedged against it: leave it be)
   }
   return true;
 }
@@ -831,6 +981,9 @@ function stepAside(pos, out) {
 // Each llama is self-contained: its own meshes, state, behaviour and leg rig. What drives it
 // comes from its brain: 'cursor' follows the pointer, 'wander' strolls around on its own.
 const STOP_DIST = 3.0, MAX_SPEED = 15, ACCEL = 9, DECEL = 7;
+// cute: a springy bounce on every step of the walk and pace (0 = the plain, realistic gait).
+// Parked at 0: tried 0.3 / 0.035 / 0.14, but the dip bent the knees more than felt right.
+const CUTE_BOUNCE = 0, CUTE_ROCK = 0, CUTE_EARS = 0.1;
 // Avoidance: a moving llama looks ahead along its heading; another llama inside that corridor
 // makes it curve away (more strongly the closer and more central it is) and ease off. Right in
 // front, it stops and turns aside. Head-on pairs both veer to their own side and pass. No pushing.
@@ -1061,6 +1214,25 @@ function keepOnWalkable(pos, prev, heading, body) {
   rampWorld(x + pushX, z + pushZ, pos);
 }
 
+// Everyone but your llama: the ramp is solid. Their paths are planned round it, but a llama going
+// fast can't turn tightly enough to hold a corner (a herd racing to catch up), and avoidance or
+// stepping aside can nudge one in. Any of its middle, shoulders, hips or head (`body`: offsets
+// along `heading`) found inside gets pushed back out through the nearest side.
+const RAMP_SOLID = 1.3;    // clearance from the walls (about half a llama's width)
+function keepOffRamp(pos, heading, body) {
+  if (!ramp) return;
+  const hx = RAMP_LEN / 2 + RAMP_SOLID, hz = RAMP_W / 2 + RAMP_SOLID;
+  const fx = Math.cos(heading - ramp.rot), fz = -Math.sin(heading - ramp.rot); // facing, ramp-local
+  let [x, z] = rampLocal(pos.x, pos.z), moved = false;
+  for (const d of body) {
+    const bx = x + d * fx, bz = z + d * fz, px = hx - Math.abs(bx), pz = hz - Math.abs(bz);
+    if (px <= 0 || pz <= 0) continue;                  // this point is clear
+    if (px < pz) x += (bx < 0 ? -1 : 1) * px; else z += (bz < 0 ? -1 : 1) * pz;
+    moved = true;
+  }
+  if (moved) rampWorld(x, z, pos);
+}
+
 // the flag ripples: a wave travels toward the tip, growing from the pole, with a little gusting
 function updateRamp(dt) {
   if (!ramp) return;
@@ -1209,7 +1381,9 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   let rollS = 0, pitchS = 0, yS = RIG_Y; // smoothed body pose
   let escapeDir = 0, escapeT = 0, wasBlocked = false; // committed turn direction when blocked
   let tilt = 0, lift = 0;               // ramp: body pitch and lift from the ground underfoot
+  let earFlop = 0;                      // cute: ears lagging the bounce
   const HIP_FX = 1.7, HIP_HX = -1.75;   // shoulder / hip positions along the body
+  const HEAD_X = 3.2;                   // roughly where the head is, ahead of the middle
   const _prev = new THREE.Vector3(), _fw = new THREE.Vector3();
 
 
@@ -1217,6 +1391,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   let fF = 0, fH = 0;             // smoothed fold amounts, front / hind
   let lookT = 0, lookYaw = 0, lookNod = 0, nodS = 0;
   let joy = 0, perk = 0, smile = 0;
+  let pet = 0, petS = 0, petting = false, petHeart = 0, petHum = 0; // pet: contentment from being stroked
   let hopT = -1;                  // single happy hop, seconds (-1 = not hopping)
   let dance = null;               // { t } – pronking happy dance
   let goalTreat = null;           // treat being walked to
@@ -1232,7 +1407,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     brain.onPoke();                                 // being poked counts as attention
     if (kushT > 0) { kushDir = -1; return; }       // woken up: get up
     if (dance) return;
-    if (joy >= 2.5) { dance = { t: 0 }; hopT = -1; } // ~third quick poke: happy dance
+    if (joy >= 2.5) { dance = { t: 0, song: true }; hopT = -1; sfx.dance(llama.position); } // ~third quick poke: happy dance (sfx: with a jingle)
     else if (hopT < 0) hopT = 0;
   }
 
@@ -1304,6 +1479,19 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     perk = Math.max(0, perk - dt * 0.8);
     smile = Math.max(0, smile - dt * 0.4);
 
+    // pet: stroked enough, it settles — stops, closes its eyes, tilts its head, hums, and now and
+    // then a heart floats up. It fades back to normal a little while after the stroking stops.
+    pet = Math.max(0, pet - dt * 0.25);
+    if (!petting && pet > 0.45) { petting = true; petHeart = 0.5; petHum = 0.15; }
+    if (petting && pet < 0.2) petting = false;
+    petS = damp(petS, petting ? 1 : 0, 4, dt);
+    self.petting = petting;
+    if (petting) {
+      smile = 1;
+      if ((petHeart -= dt) < 0) { heart(head); petHeart = 1.4 + Math.random(); }
+      if ((petHum -= dt) < 0) { sfx.hum(llama.position); petHum = 2.2 + Math.random() * 0.8; } // sfx:
+    }
+
     if (!act) {
       const next = FIXED_SPEED === null && !self.followLeader /* gather: in line, ignore treats */ ? nearestTreat(id, llama.position.x, llama.position.z, goalTreat) : null;
       if (next !== goalTreat) { goalTreat = next; goalAction = ACTIONS[Math.floor(Math.random() * ACTIONS.length)]; }
@@ -1328,7 +1516,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       const t0 = dance.t;
       dance.t += dt; perk = 1; smile = 1;
       for (let k = 0; k < 3; k++) if (t0 < k * PRONK + 0.13 && dance.t >= k * PRONK + 0.13) heart(head);
-      for (let k = 0; k < 3; k++) if (mine && !self.summit && t0 < k * PRONK + 0.12 && dance.t >= k * PRONK + 0.12) sfx.pronk(llama.position, k); // sfx:
+      for (let k = 0; k < 3; k++) if (mine && !self.summit && !dance.song && t0 < k * PRONK + 0.12 && dance.t >= k * PRONK + 0.12) sfx.pronk(llama.position, k); // sfx:
       danceY = danceHop(dance.t);
       if (dance.t > DANCE_LEN) { dance = null; joy = 0; }
     }
@@ -1353,7 +1541,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       if (t > ACT_LEN[act.kind]) act = null;
     }
     if (goalTreat && !treats.includes(goalTreat)) goalTreat = null; // gone (by us or someone else)
-    const busy = kushT > 0 || dance !== null || act !== null;
+    const busy = kushT > 0 || dance !== null || act !== null || pet > 0.15; // (pet: pauses as soon as you start stroking)
 
     // --- steering: walk to a treat if there is one, else wherever the brain wants to go ---
     const goal = goalTreat ? goalTreat.pos : (brain.goal || llama.position);
@@ -1463,7 +1651,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       const lean = Math.atan2(gF - gH, span);
       tilt = damp(tilt, lean, 10, dt);
       lift = damp(lift, ((gF - HIP_FX * Math.sin(lean)) + (gH - HIP_HX * Math.sin(lean))) / 2, 10, dt);
-    }
+    } else keepOffRamp(llama.position, heading, [0, HIP_FX, HIP_HX, HEAD_X]); // ramp: solid to the rest
 
     // --- gait blend: walk → pace → gallop (weights smoothed so transitions never pop) ---
     wPace = damp(wPace, smooth(2.6, 4.6, speed), 3, dt);
@@ -1510,8 +1698,13 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     const roll = paceW * 0.06 * Math.sin(cyc) - clamp(omega * speed * 0.012, -0.09, 0.09)
       + idleW * (1 - fF) * 0.025 * Math.sin(time * 0.55); // idle: slow weight shift side to side
     const lean = clamp((vTarget - speed) * -0.004, -0.03, 0.03); // lean back when braking, forward when accelerating
-    yS = damp(yS, RIG_Y - mix('drop') * move + bob + bounce, 20, dt);
-    pitchS = damp(pitchS, pitch + lean, 12, dt);
+    // cute: like a bouncing ball — dips sharply as a foot lands, floats up in between — with a
+    // little nose-up/nose-down rock, and the ears flop a beat behind
+    const springW = move * (1 - wGallop), sc = cyc - lerp(0.34, 0, wPace) * Math.PI * 2;
+    const spring = CUTE_BOUNCE * springW * (Math.abs(Math.cos(sc)) - 1);
+    earFlop = CUTE_EARS * springW * Math.cos(2 * sc - 0.9);
+    yS = damp(yS, RIG_Y - mix('drop') * move + bob + bounce + spring, 20, dt);
+    pitchS = damp(pitchS, pitch + lean + CUTE_ROCK * springW * Math.sin(2 * sc), 12, dt);
     rollS = damp(rollS, roll, 6, dt);
     // hop (startle): body springs up, feet leave the ground a little less so the legs tuck
     let hopY = 0;
@@ -1601,6 +1794,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     neck.rotation.z -= stompNod * 0.25;
     head.rotation.z = -(neck.rotation.z + pitchA) * 0.8 + nodS - stompNod * 0.5;
     headYaw.rotation.y = yawLook;
+    headYaw.rotation.x = petS * 0.3;                     // pet: head tilted, leaning into it
 
     // grazing: aim the neck down at the treat (solved from its horizontal distance to the neck
     // base, nose pointing down), swing it sideways if the treat is a little off-centre, nibble
@@ -1635,9 +1829,9 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       if (ear.next < 0) { ear.twitch = 1; ear.next = 2 + Math.random() * 5; }
       ear.twitch = Math.max(0, ear.twitch - dt * 4);
       ear.g.rotation.z = 0.18 + wGallop * 0.45 + neckPump * 0.6 + Math.sin(time * 1.3 + i) * 0.04
-        + Math.sin(cyc * 2) * 0.05 * move + Math.sin(ear.twitch * Math.PI) * 0.35
+        + Math.sin(cyc * 2) * 0.05 * move + earFlop + Math.sin(ear.twitch * Math.PI) * 0.35
         // happy: ears perk forward and wiggle; dancing: they flap alternately
-        - perk * 0.3 + perk * Math.sin(time * 28 + i * 2) * 0.12
+        - perk * 0.3 + perk * Math.sin(time * 28 + i * 2) * 0.12 + petS * 0.35 // pet: ears relax back
         + (dance ? Math.sin(dance.t * 14 + i * Math.PI) * 0.4 : 0);
     }
 
@@ -1645,7 +1839,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     blinkT -= dt;
     const blink = blinkT < 0.12 && blinkT > 0 ? 0.1 : 1;
     if (blinkT < 0) blinkT = 2 + Math.random() * 4;
-    for (const e of eyes) e.scale.y = blink * (1 - 0.45 * smile); // happy squint
+    for (const e of eyes) e.scale.y = blink * (1 - 0.45 * smile) * (1 - 0.88 * petS); // happy squint; pet: eyes closed
 
   }
 
@@ -1699,6 +1893,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
 
   Object.assign(self, {
     group: llama, head, parts, update, poseLegs, poke, screenRect, setCoat, dispose, coat: coat.body,
+    pet(px) { pet = Math.min(1, pet + px / 250); },      // pet: px of gentle stroking
     celebrate() { if (kushT > 0) kushDir = -1; dance = { t: 0 }; hopT = -1; }, // gather: finale dance
   });
   // a live getter (Object.assign would only copy its value once)
@@ -1733,15 +1928,22 @@ tiltIn.value = camTilt;
 zoomIn.addEventListener('input', () => setZoom(+zoomIn.value));
 orbitIn.addEventListener('input', () => { camOrbit = +orbitIn.value; placeCamera(); });
 tiltIn.addEventListener('input', () => { camTilt = +tiltIn.value; placeCamera(); });
-const soundIn = $('#sound');                                   // sfx: on/off
+const soundIn = $('#sound'), tuneIn = $('#tune');             // sfx: on/off, tune picker
 if (!SFX) $('#sound-row').remove();
-const tuneIn = $('#tune');                                     // sfx: tune picker
 for (const [k, tn] of Object.entries(TUNES)) tuneIn.add(new Option(tn.name, k, false, tn === tune));
 tuneIn.addEventListener('change', () => {
   tune = TUNES[tuneIn.value];
   try { localStorage.setItem('llama-tune', tuneIn.value); } catch {}
   sfxStart();
   sfx.party(player.group.position);                             // a little preview
+});
+const musicIn = $('#music');                                   // music: on/off
+if (!MUSIC) $('#music-row').remove();
+musicIn.checked = musicOn;
+musicIn.addEventListener('change', () => {
+  musicOn = musicIn.checked;
+  try { localStorage.setItem('llama-music', musicOn ? 'on' : 'off'); } catch {}
+  if (musicOn) sfxStart();
 });
 soundIn.addEventListener('change', () => {
   sfxOn = soundIn.checked;
@@ -1775,7 +1977,9 @@ function renderLlamaList() {
   $('#add-llama').disabled = llamas.length >= MAX_LLAMAS;
   $('#remove-llama').disabled = llamas.length <= 1;
 }
-const NAMES = ['Pip', 'Cocoa', 'Juniper', 'Biscuit', 'Fern', 'Mabel', 'Olive', 'Pebble', 'Toffee', 'Clover', 'Dot'];
+// named after iconic chairs, shuffled each visit; a new llama takes the first name not in use
+const NAMES = ['Wishbone', 'Panton', 'Hoffmann', 'Fritz', 'Gropius', 'Bertoia', 'Eames', 'Wassily', 'Barcelona',
+  'Tulip', 'Thonet', 'Cesca', 'Aalto', 'Saarinen', 'Jacobsen', 'Breuer', 'Prouvé', 'Egg'].sort(() => Math.random() - 0.5);
 
 const _spawn = new THREE.Vector3();
 function addLlama() {
@@ -1791,7 +1995,8 @@ function addLlama() {
   const used = new Set(llamas.map((l) => l.coat));
   const coat = COAT_CHOICES.find((c) => !used.has(c)) ?? COAT_CHOICES[Math.floor(Math.random() * COAT_CHOICES.length)];
   const l = createLlama({ id: 'llama-' + (llamaCount++), coat: coatFrom(coat), brain: 'wander', x: best.x, z: best.z, heading: Math.random() * Math.PI * 2 });
-  l.name = NAMES[(llamaCount - 2) % NAMES.length];
+  const taken = new Set(llamas.map((o) => o.name));
+  l.name = NAMES.find((n) => !taken.has(n)) ?? NAMES[llamaCount % NAMES.length];
   llamas.push(l);
   renderLlamaList();
 }
@@ -1889,23 +2094,204 @@ function updatePaint(dt) {
   mesh.instanceColor.needsUpdate = true;
 }
 
+// ---------- grass (decoration) ----------
+// A few sparse tufts of grass, some with tiny square flowers on the tips. Flat and minimal: thin
+// curved blades and square dots, always facing the camera, kept at least a couple of pixels
+// wide whatever the zoom. They sway faintly in the breeze and bend aside as a llama brushes
+// through. One mesh whose points are rewritten in place each frame (a few hundred triangles).
+// To remove: set GRASS = false (or delete this section and its "grass:" hook in step).
+const GRASS = FIXED_SPEED === null;
+const GRASS_TUFTS = 8;
+const GRASS_COL = new THREE.Color(0xb5bb98), FLOWER_COL = new THREE.Color(0xe9505e);
+const BLADE_SEG = 5, BRUSH_R = 3.2;  // segments per blade; how close a llama has to pass to bend it
+let grass = null;
+if (GRASS) {
+  const tufts = [], p = new THREE.Vector3();
+  for (let tries = 0; tufts.length < GRASS_TUFTS && tries < 400; tries++) {
+    randomGroundPoint(p, { x: 0, z: 0 }, 0);
+    if (onRamp(p.x, p.z, 3)) continue;                                            // ramp: not on it
+    if (paint && paint.blobs.some(([bx, bz, r]) => Math.hypot(p.x - bx, p.z - bz) < r + 3)) continue; // paint: nor in it
+    if (tufts.some((t) => Math.hypot(t.x - p.x, t.z - p.z) < 12)) continue;      // sparse
+    const n = 3 + Math.floor(Math.random() * 3), flowers = Math.random() < 0.6 ? Math.random() * 0.7 : 0;
+    const blades = [];
+    for (let i = 0; i < n; i++) blades.push({
+      x: (Math.random() - 0.5) * 0.35,                                  // where it sprouts
+      lean: (i / (n - 1) - 0.5) * 1.3 + (Math.random() - 0.5) * 0.35,   // fanned out, a bit untidy
+      h: 0.9 + Math.random() * 0.8,
+      flower: Math.random() < flowers,
+    });
+    tufts.push({ x: p.x, z: p.z, s: 0.8 + Math.random() * 0.5, blades, sw: 0, sv: 0 }); // sw/sv: bend, and its speed
+  }
+  // fixed-size buffers: 2 triangles per blade segment, plus 2 per flower; colours never change
+  const tris = tufts.reduce((n, t) => n + t.blades.reduce((m, b) => m + BLADE_SEG * 2 + (b.flower ? 2 : 0), 0), 0);
+  const geo = new THREE.BufferGeometry(), col = new Float32Array(tris * 9);
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(tris * 9), 3).setUsage(THREE.DynamicDrawUsage));
+  let i = 0;
+  const paintTri = (k) => { for (let v = 0; v < 3; v++, i += 3) { col[i] = k.r; col[i + 1] = k.g; col[i + 2] = k.b; } };
+  for (const t of tufts) for (const b of t.blades) {
+    for (let k = 0; k < BLADE_SEG * 2; k++) paintTri(GRASS_COL);
+    if (b.flower) { paintTri(FLOWER_COL); paintTri(FLOWER_COL); }
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+  mesh.frustumCulled = false;
+  scene.add(mesh);
+  grass = { tufts, mesh, t: 0 };
+}
+const _gR = new THREE.Vector3(), _gU = new THREE.Vector3();
+// a blade's shape in its tuft's plane (u across the screen, v up), at q along it (0 base, 1 tip)
+const bladeU = (t, b, q) => (b.x + (b.lean * 0.7 + t.bend) * b.h * q * q) * t.s;
+// where a blade's tip is in the world right now (butterflies land on the flowers)
+function bladeTip(t, b, out) {
+  const u = bladeU(t, b, 1);
+  return out.set(t.x + _gR.x * u, b.h * t.s, t.z + _gR.z * u);
+}
+function updateGrass(dt) {
+  if (!grass) return;
+  grass.t += dt;
+  _gR.set(camDir.z, 0, -camDir.x).normalize();           // screen-right, along the ground
+  _gU.setFromMatrixColumn(camera.matrixWorld, 1);        // screen-up
+  // brushed: a llama passing close pushes the blades the way it's going (across the screen);
+  // a spring brings them back, with a little wobble
+  for (const t of grass.tufts) {
+    let f = 0;
+    for (const l of llamas) {
+      const q = l.group.position, d = Math.hypot(q.x - t.x, q.z - t.z);
+      if (d < BRUSH_R && dt > 0 && l.grassX !== undefined)
+        f += ((q.x - l.grassX) * _gR.x + (q.z - l.grassZ) * _gR.z) / dt * (1 - d / BRUSH_R) * 3;
+    }
+    t.sv += (f - 30 * t.sw - 5 * t.sv) * dt;
+    t.sw = clamp(t.sw + t.sv * dt, -0.8, 0.8);
+    t.bend = t.sw + 0.05 * Math.sin(grass.t * 1.3 + t.x * 0.3);  // plus a faint breeze
+  }
+  for (const l of llamas) { l.grassX = l.group.position.x; l.grassZ = l.group.position.z; }
+
+  const px = VIEW / Math.max(1, innerHeight);            // world units per screen pixel
+  const w = Math.max(0.07, 1.6 * px), f = Math.max(0.13, 2.5 * px);
+  const pos = grass.mesh.geometry.attributes.position, a = pos.array;
+  let i = 0;
+  const put = (x, y, z) => { a[i++] = x; a[i++] = y; a[i++] = z; };
+  for (const t of grass.tufts) {
+    const at = (u, v) => put(t.x + _gR.x * u, v, t.z + _gR.z * u);  // tuft plane → world
+    for (const b of t.blades) {
+      for (let k = 0; k < BLADE_SEG; k++) {                // a ribbon, tapering toward the tip
+        const q0 = k / BLADE_SEG, q1 = (k + 1) / BLADE_SEG;
+        const u0 = bladeU(t, b, q0), v0 = b.h * t.s * q0, u1 = bladeU(t, b, q1), v1 = b.h * t.s * q1;
+        const L = Math.hypot(u1 - u0, v1 - v0), nu = -(v1 - v0) / L, nv = (u1 - u0) / L;
+        const ra = w * (1 - 0.5 * q0) / 2, rb = w * (1 - 0.5 * q1) / 2;
+        at(u0 + nu * ra, v0 + nv * ra); at(u1 + nu * rb, v1 + nv * rb); at(u1 - nu * rb, v1 - nv * rb);
+        at(u0 + nu * ra, v0 + nv * ra); at(u1 - nu * rb, v1 - nv * rb); at(u0 - nu * ra, v0 - nv * ra);
+      }
+      if (b.flower) {                                      // a square dot, square to the screen
+        const u = bladeU(t, b, 1), cx = t.x + _gR.x * u, cy = b.h * t.s, cz = t.z + _gR.z * u;
+        const sq = (m, n) => put(cx + (_gR.x * m + _gU.x * n) * f, cy + _gU.y * n * f, cz + (_gR.z * m + _gU.z * n) * f);
+        sq(-1, -1); sq(1, -1); sq(1, 1); sq(-1, -1); sq(1, 1); sq(-1, 1);
+      }
+    }
+  }
+  pos.needsUpdate = true;
+}
+
+// ---------- butterflies (decoration) ----------
+// A couple of butterflies drift about, flapping, and every so often settle: on a grass flower,
+// or on the head of a llama that's standing still (they take off again if it moves).
+// To remove: set BUTTERFLIES = false (or delete this section and its hook in step).
+const BUTTERFLIES = FIXED_SPEED === null;
+const BFLY_COLS = [0xf1d68e, 0xa3bccd];   // butter, dusty blue
+const BFLY_SPEED = 3.2;
+const flies = [];
+if (BUTTERFLIES) {
+  // one wing: a forewing and a smaller hindwing, flat, reaching out to the side (+z) from the body
+  const wing = mergeGeometries([
+    new THREE.CircleGeometry(0.36, 14).scale(0.8, 1, 1).rotateX(-Math.PI / 2).translate(0.1, 0, 0.32),
+    new THREE.CircleGeometry(0.24, 12).scale(0.8, 1, 1).rotateX(-Math.PI / 2).translate(-0.17, 0, 0.22),
+  ]);
+  const wingL = wing, wingR = wing.clone().scale(1, 1, -1);
+  const bodyGeo = new THREE.CapsuleGeometry(0.045, 0.36, 3, 6).rotateZ(Math.PI / 2);
+  const bodyMat = new THREE.MeshBasicMaterial({ color: 0x555555 });
+  for (const c of BFLY_COLS) {
+    const g = new THREE.Group(), m = new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide });
+    const l = new THREE.Mesh(wingL, m), r = new THREE.Mesh(wingR, m);
+    g.add(l, r, new THREE.Mesh(bodyGeo, bodyMat));
+    const start = randomGroundPoint(new THREE.Vector3(), { x: 0, z: 0 }, 0);
+    g.position.set(start.x, 3 + Math.random() * 2, start.z);
+    scene.add(g);
+    flies.push({ g, l, r, v: new THREE.Vector3(), t: Math.random() * 10, state: 'fly', target: new THREE.Vector3(), spot: null, rest: 0, wait: 0 });
+  }
+  flies.forEach(pickFlight);
+}
+const _fb = new THREE.Vector3(), _fd = new THREE.Vector3();
+// somewhere to go: usually a flower to settle on, sometimes a resting llama, sometimes just a wander
+function pickFlight(fl) {
+  const flowers = grass ? grass.tufts.flatMap((t) => t.blades.filter((b) => b.flower).map((b) => ({ t, b }))) : [];
+  const resting = llamas.filter((l) => l.group.position.distanceToSquared(l.lastPos ?? l.group.position) < 1e-6 && !l.petting);
+  const r = Math.random();
+  fl.spot = null;
+  if (r < 0.45 && flowers.length) fl.spot = { flower: pick(flowers) };
+  else if (r < 0.7 && resting.length) fl.spot = { llama: pick(resting) };
+  if (!fl.spot) { randomGroundPoint(fl.target, fl.g.position, 6); fl.target.y = 2.5 + Math.random() * 3; }
+  fl.state = 'fly';
+}
+// where a settling spot is right now (flowers sway, llamas move their heads)
+function spotPos(spot, out) {
+  if (spot.flower) return bladeTip(spot.flower.t, spot.flower.b, out).setY(out.y + 0.12);
+  spot.llama.head.getWorldPosition(out);
+  return out.setY(out.y + 0.95);                         // on top of the head, between the ears
+}
+function updateButterflies(dt) {
+  for (const fl of flies) {
+    fl.t += dt;
+    const g = fl.g;
+    if (fl.state === 'rest') {
+      spotPos(fl.spot, g.position);
+      const l = fl.spot.llama, moved = l && (l.group.position.distanceToSquared(l.lastPos) > 1e-4 || l.petting);
+      if ((fl.rest -= dt) < 0 || moved) { pickFlight(fl); fl.v.set(0, 2, 0); }
+      // resting: wings mostly closed overhead, slowly fanning
+      const a = 1.25 - 0.25 * (0.5 + 0.5 * Math.sin(fl.t * 2.5));
+      fl.l.rotation.x = -a; fl.r.rotation.x = a;
+      continue;
+    }
+    const goal = fl.spot ? spotPos(fl.spot, _fb) : fl.target;
+    _fd.subVectors(goal, g.position);
+    const d = _fd.length();
+    if (d < 0.35 && fl.spot) { fl.state = 'rest'; fl.rest = 3 + Math.random() * 5; continue; }
+    if (d < 1 && !fl.spot) { pickFlight(fl); continue; }
+    // steer toward it, fluttering: a sideways weave and a bob
+    _fd.multiplyScalar(1 / Math.max(d, 1e-3));
+    const speed = BFLY_SPEED * Math.min(1, 0.4 + d / 3);
+    fl.v.lerp(_fd.multiplyScalar(speed), 1 - Math.exp(-2.5 * dt));
+    g.position.addScaledVector(fl.v, dt);
+    g.position.x += Math.sin(fl.t * 3.1) * 0.6 * dt * fl.v.z / (speed + 0.01);
+    g.position.z -= Math.sin(fl.t * 3.1) * 0.6 * dt * fl.v.x / (speed + 0.01);
+    g.position.y += Math.sin(fl.t * 7) * 0.9 * dt;
+    if (fl.v.x * fl.v.x + fl.v.z * fl.v.z > 0.04) g.rotation.y = Math.atan2(-fl.v.z, fl.v.x);
+    const a = 0.15 + 1.0 * (0.5 + 0.5 * Math.sin(fl.t * 19));   // flapping
+    fl.l.rotation.x = -a; fl.r.rotation.x = a;
+  }
+  for (const l of llamas) (l.lastPos ??= new THREE.Vector3()).copy(l.group.position);
+}
+
 // ---------- gather the herd (optional mini-goal) ----------
 // Press and hold a wanderer to herd it: a bar fills in a bubble above it, then it hops, pops a
 // heart and trots over to follow your llama in a conga line (hold one that's already in line
 // to let it go). A speech bubble over your llama counts the herd. Once everyone's in line the
-// herd dances, disbands, and it can be played again.
+// herd dances, disbands, and it can be played again. Take longer than herdTime() from the first
+// one and the line breaks up (the counter pulses for the last few seconds).
 // To remove: set GATHER = false — or delete this section, the #herd-bubble / #hold-tip markup
 // and CSS, and the small hooks marked "gather:" in the llama code.
 const GATHER = FIXED_SPEED === null;
-const HOLD_DELAY = 0.15;   // seconds before the ring appears (so taps stay taps)
-const HOLD_TIME = 0.75;    // seconds of holding to fill the ring
+const HOLD_DELAY = 0.15;   // seconds before the bar starts (so taps stay taps)
+const HOLD_TIME = 0.75;    // seconds of holding to fill the bar
+// herd everyone within this many seconds of the first, or the line breaks up (45s for the five
+// you start with; more llamas, more time)
+const herdTime = () => 15 + 6 * (llamas.length - 1);
 const HERD_RANGE = 20;     // your llama has to be this close to one to herd it (or let it go)
 const LINE_GAP = 7;        // spacing between llamas in the line
 const PARTY_LEN = 3.2;     // finale length, then everyone wanders off
 const YIELD_WIDTH = 6;     // followers this close to your llama's path step out of its way
 const REGATHER_AFTER = 2;  // pause before the game can be played again
 const line = [];           // followers in order, nearest to you first
-let party = -1, cooldown = 0, hintPause = 0;
+let party = -1, cooldown = 0, hintPause = 0, herdT = 0;
 const bubbleEl = document.getElementById('herd-bubble');
 const tipEl = document.getElementById('hold-tip');
 const tipText = tipEl.querySelector('span'), tipBar = tipEl.querySelector('.bar i');
@@ -1971,7 +2357,7 @@ function gatherStep(dt) {
     const k = holding ? clamp((press.t - HOLD_DELAY) / HOLD_TIME, 0, 1) : 0;
     const [bx, by] = aboveHead(focus, 2.6);
     tipEl.style.translate = `calc(${bx}px - 50%) calc(${by}px - 100%)`;
-    tipText.textContent = line.includes(focus) ? 'hold to let go' : 'hold to herd';
+    tipText.innerHTML = `<i>${focus.name}</i> · ` + (line.includes(focus) ? 'hold to let go' : 'hold to <b>♥</b>');
     tipBar.style.background = hexOf(focus);
     tipBar.style.width = k * 100 + '%';
     tipEl.classList.remove('done');                 // a finished pop would otherwise keep it hidden
@@ -1993,6 +2379,18 @@ function gatherStep(dt) {
     return;
   }
   if (cooldown > 0) { cooldown -= dt; return; }
+
+  // the clock: starts with the first one herded; it pulses near the end, then the line breaks up
+  herdT = line.length ? herdT + dt : 0;
+  bubbleEl.classList.toggle('hurry', herdT > herdTime() - 6);
+  if (herdT > herdTime()) {
+    sfx.herdLost(player.group.position);
+    releaseLine();
+    renderBubble();
+    bubbleEl.classList.remove('hurry');
+    herdT = 0;
+    return;
+  }
 
   // each follower aims one gap behind the llama in front of it, but your llama has right of way:
   // a follower standing in the corridor between your llama and where it's heading steps aside
@@ -2026,7 +2424,7 @@ if (GATHER) {
   // a one-off nudge once they've been playing a little while
   addEventListener('pointermove', () => setTimeout(() => {
     if (line.length || party >= 0) return;
-    hint.textContent = 'press and hold a llama to herd it'; hint.style.opacity = 1;
+    hint.textContent = TOUCH ? 'hold a llama to herd it, rub it to pet it' : 'press and hold a llama to herd it'; hint.style.opacity = 1;
     setTimeout(() => { hint.style.opacity = 0; }, 4500);
   }, 30000), { once: true });
 }
@@ -2036,6 +2434,10 @@ function step(dt) {
   updateTreats(dt);
   updateRamp(dt);
   updatePaint(dt);
+  updateGrass(dt);                  // grass:
+  updateButterflies(dt);            // butterflies:
+  updatePokeTip(dt);                // sfx:
+  updateMusic(dt);                  // music:
   gatherStep(dt);
   for (const l of llamas) l.update(dt);
 }
