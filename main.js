@@ -102,6 +102,12 @@ function tinted(geo, hex) {   // bake a flat colour into a geometry (for vertex-
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return geo;
 }
+// blight: X X eyes for a llama that has keeled over — a little cross over each eye, facing out
+const X_EYES_GEO = mergeGeometries([-1, 1].flatMap((s) => {
+  const n = new THREE.Vector3(0.72, 0.42, s * 0.52).normalize(), q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+  return [1, -1].map((d) => new THREE.BoxGeometry(0.42, 0.09, 0.05).rotateZ(d * Math.PI / 4).applyQuaternion(q)
+    .translate(n.x * 0.06, n.y * 0.06, s * 0.52 + n.z * 0.06));
+}));
 const MUZZLE_GEO = mergeGeometries([
   tinted(new THREE.CapsuleGeometry(0.22, 0.4, 4, 12).rotateX(Math.PI / 2).translate(0.9, 0.33, 0), C.nose),
   tinted(new THREE.BoxGeometry(0.05, 0.06, 0.42).translate(1.12, 0.33, 0), 0x000000),
@@ -138,6 +144,7 @@ function rainbowOf(part, amount) {
 function drawHerd() {
   for (const b of batches.values()) b.n = 0;
   for (const l of llamas) for (const part of l.parts) {
+    if (introOn && l === player) break;   // intro: yours appears on the snap
     const b = part.batch;
     if (b.n >= BATCH_CAP) continue;
     b.mesh.setMatrixAt(b.n, part.obj.matrixWorld);
@@ -246,6 +253,8 @@ function render() {
   scene.updateMatrixWorld();
   drawHerd();
   renderer.render(scene, camera);
+  introLayer?.draw();                       // intro: the butterfly above the title card
+  if (glitch.cv) drawGlitch();              // ramp: the summit glitch, over your llama
 }
 
 // ---------- cursor marker ----------
@@ -303,8 +312,9 @@ function llamaAt(x, y, withMargin) {
   return best;
 }
 
+let orbitDrag = null;          // { x, y }: a right-drag turning the camera (control panel section)
 function onPointerMove(e) {
-  if (FIXED_SPEED !== null) return;
+  if (FIXED_SPEED !== null || introOn || orbitDrag) return;   // intro: yours waits, unseen (right-dragging: orbiting, not leading)
   if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinch && touches.size >= 2) { setZoom(pinch.z * spread() / pinch.d); return; } // touch: pinch-zoom
@@ -338,6 +348,10 @@ function onPointerMove(e) {
       setTimeout(() => { hint.style.opacity = 0; }, 13000);
       setTimeout(() => { hint.textContent = TOUCH ? 'double-tap the ground to drop a ball' : 'click the ground to drop a ball'; hint.style.opacity = 1; }, 22000);
       setTimeout(() => { hint.style.opacity = 0; }, 26000);
+      setTimeout(() => { hint.textContent = TOUCH ? 'rub a llama gently to pet it' : 'stroke a llama gently to pet it'; hint.style.opacity = 1; }, 48000);
+      setTimeout(() => { hint.style.opacity = 0; }, 52500);
+      if (ramp) setTimeout(() => { hint.textContent = 'walk your llama up the ramp'; hint.style.opacity = 1; }, 70000);
+      setTimeout(() => { hint.style.opacity = 0; }, 74500);
     }
     marker.visible = !pointerOn;
     marker.position.set(target.x, groundHeight(target.x, target.z) + 0.05, target.z);
@@ -357,7 +371,7 @@ const _drop = new THREE.Vector3();
 const TAP_MAX = 0.3;           // seconds: shorter than this counts as a tap
 let press = null;              // { llama, t, x, y, claimed }
 renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (FIXED_SPEED !== null) return;
+  if (FIXED_SPEED !== null || introOn || e.button === 2) return;   // (intro: nothing to do in the scene yet; right button: orbiting)
   const touch = e.pointerType === 'touch';
   if (touch) {
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -399,6 +413,13 @@ addEventListener('pointermove', (e) => {
 const LOOK_AFTER = 3;           // seconds of cursor stillness before it starts glancing around
 const KUSH_AFTER = 27;          // ...and before it lies down
 const DANCE_LEN = 2.7;
+const DROP_H = 9, DROP_G = 100;  // intro: your llama's drop into the scene (height, gravity)
+const KEEL_SWAY = 2.4, KEEL_TIP = 0.55; // blight: seconds staggering before it goes, and of the fall itself
+const KEEL_EDGE = 1.07;          // blight: the outer edge of its hooves (what it tips over on)
+const KEEL_OVER = 0;            // blight: how far past its side it rolls (rad; more lifts the stiff legs)
+const KEEL_BODY = 3.2;          // blight: how far to the side its body lies (from where it stood)
+const KEEL_SIDE = 1;            // blight: which side it prefers to fall to (it's turned to face you first)
+const _dimEye = new THREE.Color(0x262626), _hsl = {}; // blight: dark eyes on a paled coat
 const seg = (x, a, b) => clamp((x - a) / (b - a), 0, 1);
 // hop height over time: crouch, spring up, land, settle
 function hopCurve(t) {
@@ -638,7 +659,7 @@ function sfxStart() {
   if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
   actx = new AudioContext();
   sfxOut = actx.createGain();
-  sfxOut.gain.value = SFX_VOL;
+  sfxOut.gain.value = introOn ? 0 : SFX_VOL;   // intro: the scene stays quiet until the snap
   sfxOut.connect(actx.destination);
   sfxNoise = actx.createBuffer(1, actx.sampleRate, actx.sampleRate); // a second of white noise, reused
   const d = sfxNoise.getChannelData(0);
@@ -692,6 +713,11 @@ const TUNES = {
              voice: [[1, 1, 1.4, 'sine'], [2, 0.25, 0.6, 'sine']] },
   koto:    { name: 'Koto · in scale', scale: [0, 1, 5, 7, 8], base: 329.63,      // E4, plucked
              voice: [[1, 1, 1.2, 'triangle'], [2, 0.3, 0.3, 'sine'], [3, 0.1, 0.15, 'sine']] },
+  // renaissance fair: a plucked lute (a doubled, slightly detuned course; upper harmonics fade fast)
+  // in the old dorian mode, and in the music a bourdon of open fifths underneath
+  lute:    { name: 'Lute · dorian', scale: [0, 2, 3, 5, 7, 9, 10], base: 293.66,  // D4
+             voice: [[1, 1, 1.1, 'triangle'], [1.004, 0.45, 1, 'triangle'], [2, 0.4, 0.4, 'sine'], [3, 0.22, 0.22, 'sine'], [4, 0.1, 0.12, 'sine']],
+             bass: [0, 4, 0, 3], fifths: true },
 };
 let tune = TUNES.marimba;
 try { tune = TUNES[localStorage.getItem('llama-tune')] ?? tune; } catch {}
@@ -731,7 +757,6 @@ const sfx = {
   lieDown: (pos) => sfxNotes(pos, [4, 2, 0], { gap: 0.2, decay: 0.4, gain: CHIME_VOL * 0.8 }), // sleepy, down
   getUp: (pos) => sfxNotes(pos, [0, 2, 4], { gap: 0.09 }),
   herdJoin: (pos, n) => sfxNotes(pos, [2 + n, 4 + n]),                         // higher with each one herded
-  herdLeave: (pos) => sfxNotes(pos, [6, 3]),
   herdLost: (pos) => sfxNotes(pos, [6, 4, 2, 0], { gap: 0.13, decay: 0.35 }),  // time ran out: aww
   party: (pos) => sfxNotes(pos, [5, 7, 9, 10, 12], { gap: 0.08, decay: 0.3 }),
   // pet: a contented llama's hum — a soft low "mm", two sines a hair apart, rising a touch then settling
@@ -759,6 +784,27 @@ const sfx = {
     sfxNote(t + 0.38, pan, 12, g, 0.5);
   },
   // piles: a piece landing or bumping — a soft wooden tok (blocks), a duller thud (balls), a tick (cone, stick)
+  // blight: a llama keeling over — a soft, dull thud, and the breath going out of it
+  keel(pos) {
+    const at = sfxAt(pos); if (!at) return;
+    const [v, pan] = at, t = actx.currentTime;
+    sfxTone(t, pan, { from: 120, to: 45, gain: 0.22 * v, decay: 0.25 });
+    sfxHiss(t, pan, { freq: 500, gain: 0.08 * v, decay: 0.12 });
+    sfxHiss(t + 0.15, pan, { freq: 900, gain: 0.015 * v, attack: 0.2, decay: 0.6 });
+  },
+  // void: something sinking into it — a low, soft swallow
+  gulp(pos) {
+    const at = sfxAt(pos); if (!at) return;
+    const [v, pan] = at, t = actx.currentTime;
+    sfxTone(t, pan, { from: 70, to: 28, gain: 0.18 * v, decay: 0.7 });
+  },
+  // intro: your llama hitting the ground after the snap — a heavy, dull thud
+  land(pos) {
+    const at = sfxAt(pos); if (!at) return;
+    const [v, pan] = at, t = actx.currentTime;
+    sfxTone(t, pan, { from: 150, to: 45, gain: 0.5 * v, decay: 0.2 });
+    sfxHiss(t, pan, { freq: 700, gain: 0.2 * v, decay: 0.07 });
+  },
   // piles: a piece popped by a click — a soft rising bloop
   pop(pos) {
     const at = sfxAt(pos); if (!at) return;
@@ -788,6 +834,16 @@ const sfx = {
                   [7, 1.24], [9, 1.36], [11, 1.48], [14, 1.86]];
     song.forEach(([d, dt], i) => sfxNote(t + dt, pan, d, CHIME_VOL * v, i === song.length - 1 ? 0.7 : 0.22));
   },
+  // ramp: the summit glitch — a short, low digital chirp, jumping pitch halfway
+  glitch(pos) {
+    const at = sfxAt(pos); if (!at) return;
+    const [v, pan] = at, t = actx.currentTime, f = 180 + Math.random() * 700, o = actx.createOscillator();
+    o.type = 'square';
+    o.frequency.setValueAtTime(f, t);
+    o.frequency.setValueAtTime(f * (0.5 + Math.random()), t + 0.02);
+    sfxEnv(o, t, GLITCH_VOL * v, 0.001, 0.045, pan);
+    o.start(t); o.stop(t + 0.08);
+  },
   // the ball pellet touching down (k: how hard)
   tap(pos, k = 1) {
     const at = sfxAt(pos); if (!at) return;
@@ -812,7 +868,7 @@ const _pt = new THREE.Vector3();
 if (SFX) for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => { pokeWait = -1; pokeTip.classList.remove('show'); });
 else pokeTip.remove();
 function updatePokeTip(dt) {
-  if (pokeWait < 0) return;                             // poked: gone
+  if (pokeWait < 0 || introOn) return;                  // poked: gone (intro: not while your llama is still to come)
   if ((pokeWait = Math.max(0, pokeWait - dt)) > 0) return; // shown: follows your llama every frame
   player.head.getWorldPosition(_pt);
   _pt.y += 2.6;
@@ -826,20 +882,37 @@ function updatePokeTip(dt) {
 // A quiet tune that makes itself up as it goes, in the current scale: a soft melody wandering by
 // small steps, with unhurried, uneven timing and the odd rest, over a low note every few bars.
 // Plays once sound has started; "Music" in the panel turns it off.
+// blight: as the herd sickens the tune rots — rests creep in, it slows, it goes flat and out of
+// tune, drifts downward and gets muffled, and the low notes give way to the intro's drone, until
+// the drone is all that's left.
 // To remove: set MUSIC = false (or delete this section and the hooks marked "music:").
 const MUSIC = SFX;
 const MUSIC_VOL = 0.025;
-let musicOn = MUSIC, musicOut = null;
+const MUSIC_DRONE = 0.05;     // blight: the drone's level once the tune has rotted away
+let musicOn = MUSIC, musicOut = null, musicLP = null, drone = null;
+let blight = 0;                // blight: how far it has spread, 0..1 (kept up by that section; music, rain read it)
+let voidOpen = false;          // void: the pit is open (set in that section; read by sections before it)
+let blightGlitch = 0;          // blight: your llama glitching now and then (0 or a burst's strength; drawGlitch reads it)
 try { if (localStorage.getItem('llama-music') === 'off') musicOn = false; } catch {}
 const music = { wait: 1.5, deg: 3, n: 0 };
-// a note with a softer attack than the chimes (and an octave down for the high tunes)
-function musicNote(t, deg, gain, decay) {
-  if (!musicOut) { musicOut = actx.createGain(); musicOut.connect(sfxOut); }
+// the music's own output: a level (for fades) and a low-pass (blight: muffles it as it rots)
+function musicBus() {
+  if (!musicOut) {
+    musicOut = actx.createGain(); musicLP = actx.createBiquadFilter();
+    musicLP.type = 'lowpass'; musicLP.frequency.value = 12000;
+    musicOut.connect(musicLP).connect(sfxOut);
+  }
+  return musicOut;
+}
+// a note with a softer attack than the chimes (and an octave down for the high tunes); cents: off-key
+function musicNote(t, deg, gain, decay, cents = 0) {
+  musicBus();
   const hz = noteHz(deg) * (tune.base > 400 ? 0.5 : 1);
   for (const [mul, level, dm, wave] of tune.voice) {
     const o = actx.createOscillator(), g = actx.createGain(), d = decay * dm;
     o.type = wave;
     o.frequency.value = hz * mul;
+    o.detune.value = cents;
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(gain * level, t + 0.06);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06 + d);
@@ -850,16 +923,225 @@ function musicNote(t, deg, gain, decay) {
 }
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 function updateMusic(dt) {
-  if (!musicOn || !sfxOn || !actx || actx.state !== 'running' || (music.wait -= dt) > 0) return;
+  if (introOn || !actx || actx.state !== 'running') return;     // intro: not yet
+  const rot = blight;                                            // blight: 0 sweet … 1 rotted away
+  updateDrone(rot);
+  if (!musicOn || !sfxOn || (music.wait -= dt) > 0) return;
   const t = actx.currentTime + 0.05, n = tune.scale.length;
-  if (music.n % 8 === 0) musicNote(t, [0, 3, 1, 4][(music.n / 8) % 4] - n, MUSIC_VOL * 0.9, 4); // low note
-  if (Math.random() < 0.82) {                                    // melody (sometimes a rest)
-    music.deg += pick([-2, -1, -1, 0, 1, 1, 2]) + (music.deg < 2 ? 1 : music.deg > 7 ? -1 : 0);
+  musicBus();
+  musicLP.frequency.setTargetAtTime(700 + 11000 * (1 - rot) ** 3, t, 2);   // blight: muffled
+  const off = () => -rot * 70 + (Math.random() - 0.5) * rot * 90;          // blight: flat, and unsteady
+  if (music.n % 8 === 0 && rot < 0.85) {                         // low note (lute: an open fifth)
+    const low = (tune.bass ?? [0, 3, 1, 4])[(music.n / 8) % 4] - n;
+    musicNote(t, low, MUSIC_VOL * 0.9 * (1 - rot), 4, off());
+    if (tune.fifths) musicNote(t, low + 4, MUSIC_VOL * 0.55 * (1 - rot), 4, off());
+  }
+  if (Math.random() < 0.82 * (1 - rot) ** 1.5) {                 // melody (sometimes a rest — blight: more and more)
+    music.deg += pick([-2, -1, -1, 0, 1, 1, 2]) + (music.deg < 2 ? 1 : music.deg > 7 ? -1 : 0)
+      - (Math.random() < rot * 0.35 ? 1 : 0);                      // blight: sinking
     music.deg = clamp(music.deg, 0, 9);
-    musicNote(t, music.deg, MUSIC_VOL, 1.6);
+    musicNote(t, music.deg, MUSIC_VOL, 1.6 * (1 + rot), off());
   }
   music.n++;
-  music.wait = pick([0.7, 0.7, 1.05, 1.05, 1.4, 2.1]);
+  music.wait = pick([0.7, 0.7, 1.05, 1.05, 1.4, 2.1]) * (1 + 1.3 * rot);   // blight: slowing
+}
+// blight: the drone — the intro's (two low saws beating a semitone apart, a tritone above), low and
+// muffled, breathing slowly; it rises as the tune rots. Through the music bus, so "Music" mutes it.
+function updateDrone(rot) {
+  const want = musicOn && sfxOn ? MUSIC_DRONE * smooth(0.35, 1, rot) : 0;
+  if (!drone && want <= 0) return;
+  const t = actx.currentTime;
+  if (!drone) {
+    const g = actx.createGain(), lp = actx.createBiquadFilter(), lfo = actx.createOscillator(), depth = actx.createGain();
+    g.gain.value = 0;
+    lp.type = 'lowpass'; lp.frequency.value = 260; lp.Q.value = 3;
+    lfo.frequency.value = 0.07; depth.gain.value = 120;            // the filter slowly opening and closing
+    lfo.connect(depth).connect(lp.frequency);
+    lp.connect(g).connect(musicBus());
+    const oscs = [[55, 'sawtooth', 1], [55.8, 'sawtooth', 1], [77.8, 'square', 0.35]].map(([hz, wave, level]) => {
+      const o = actx.createOscillator(), og = actx.createGain();
+      o.type = wave; o.frequency.value = hz; og.gain.value = level;
+      o.connect(og).connect(lp);
+      o.start(t);
+      return o;
+    });
+    lfo.start(t);
+    drone = { g, oscs: [...oscs, lfo] };
+  }
+  drone.g.gain.setTargetAtTime(want, t, 2);
+  if (want <= 0 && drone.g.gain.value < 0.0005) {               // faded out: stop it
+    for (const o of drone.oscs) o.stop(t + 0.1);
+    drone = null;
+  }
+}
+
+// ---------- intro (title screen) ----------
+// A black card with "Llama Land" cut out of it (the scene already playing behind the type), and
+// your llama nowhere to be seen. Play turns the sound on: the title swells for a second over a low
+// drone, then a snap — the card is simply gone and your llama is simply there. Then the music
+// fades in. Until the snap the scene's own sounds and music are held back.
+// To turn off: INTRO_ON = false. To remove: delete this section, #intro in index.html + style.css, and the
+// small hooks marked "intro:".
+const BLIGHT_ON = true;        // ← false: no infection at all (the calm version: and the cute title, below)
+const INTRO_ON = true;        // ← false: skip the title screen and start straight in the scene
+const INTRO_RAIN = false;      // ← false: no shower over the title screen
+const INTRO = INTRO_ON && SFX; // (never in review mode)
+// the calm version (no blight — switched off here, or in the panel last time): a cute title instead.
+// The coral logo sits over the live scene with a Play button; no drone, no swell — just the snap and the drop.
+const INTRO_CUTE = INTRO && (!BLIGHT_ON || (() => { try { return localStorage.getItem('llama-blight') === 'off'; } catch { return false; } })());
+const CUTE_SNAP = 0.12;       // seconds from Play to the snap
+const INTRO_SPIN = 4;         // degrees a second the camera slowly orbits while the title waits...
+const ORBIT_HOME = camOrbit;  // ...and from Play it glides back to where it started (the angle the ramp was placed for)
+const ORBIT_HOME_TIME = 1.6;  // seconds that glide takes (eased in and out, the short way round)
+let homing = null;            // { from, by, t }: the glide home in progress
+const INTRO_SWELL = 2.5;        // seconds the title swells before the snap
+const LOGO_START = 0.6;         // the title's size at first (× its width in style.css, --logo-w)
+const LOGO_END = 1;         // ...and at the moment of the snap
+const INTRO_MUSIC_IN = 1.6;   // seconds after the snap before the music starts fading in
+const INTRO_RAIN_CLEAR = 1;   // ...and before the shower starts clearing (gone ~6 s later)
+const INTRO_SHOWER = 1e6;     // (rain: the intro shower's length until the snap gives it an end)
+const DRONE_VOL = 0.03;       // the drone's level under the swell
+const SNAP_VOL = 0.05;        // the snap's level
+const introEl = document.getElementById('intro');
+let introOn = INTRO, introGo = false;
+let introLayer = null;         // butterflies: { draw, end } — one drawn above the card (set in that section)
+if (!INTRO) introEl.remove();
+else {
+  introEl.style.setProperty('--swell', LOGO_START);
+  if (INTRO_CUTE) {
+    introEl.classList.add('cute');
+    // the logo inline (not an <img>), so each letter can pop in on its own, one after another
+    const logo = document.createElement('div');
+    logo.className = 'logo';
+    logo.setAttribute('role', 'img'); logo.setAttribute('aria-label', 'llama land');
+    introEl.prepend(logo);
+    fetch('logo-cute.svg').then((r) => r.text()).then((svg) => {
+      logo.innerHTML = svg;
+      logo.querySelectorAll('path').forEach((p, i) => p.style.setProperty('--i', i));
+    }).catch(() => { logo.innerHTML = '<img src="logo-cute.svg" alt="">'; });
+    document.getElementById('play').innerHTML = 'Play';
+  }
+  hint.style.opacity = 0;                              // (hints wait for the scene)
+  document.getElementById('play').addEventListener('click', introPlay);
+  addEventListener('keydown', (e) => { if (introOn && (e.key === 'Enter' || e.key === ' ')) introPlay(); });
+}
+function introPlay() {
+  if (introGo) return;
+  introGo = true;
+  if (INTRO_SPIN) homing = { from: camOrbit, by: ((ORBIT_HOME - camOrbit) % 360 + 540) % 360 - 180, t: 0 }; // the slow turn glides home
+  sfxStart();
+  introEl.classList.add('go');
+  const lag = actx ? 0.03 + (actx.outputLatency || actx.baseLatency || 0) : 0; // so the picture lands with the sound
+  if (INTRO_CUTE) {                                    // the cute title: just the snap, and it's gone
+    if (actx) introSnapSound(actx.currentTime + 0.03 + CUTE_SNAP);
+    setTimeout(introSnap, (lag + CUTE_SNAP) * 1000);
+    return;
+  }
+  if (actx) introSound(actx.currentTime + 0.03);
+  const t0 = performance.now() + lag * 1000;
+  const frame = (now) => {
+    const k = clamp((now - t0) / 1000 / INTRO_SWELL, 0, 1);
+    if (k >= 1) return introSnap();
+    introEl.style.setProperty('--swell', lerp(LOGO_START, LOGO_END, k * k));  // slow, then faster
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+function introSnap() {
+  introEl.remove();
+  introOn = false;            // your llama is drawn again from this frame (drawHerd)...
+  introLayer?.end(); introLayer = null;   // butterflies: back down into the scene
+  player.drop();              // ...in mid-air, falling
+  if (!hasTarget) hint.style.opacity = 1;                 // (the first hint)
+  if (rain && rainLen === INTRO_SHOWER) rainLen = rainT + INTRO_RAIN_CLEAR + 6;   // rain: the intro shower clears
+  if (!actx) return;
+  const t = actx.currentTime;
+  sfxOut.gain.setValueAtTime(SFX_VOL, t);
+  musicBus();
+  musicOut.gain.setValueAtTime(0, t);
+  musicOut.gain.setValueAtTime(0, t + INTRO_MUSIC_IN);
+  musicOut.gain.linearRampToValueAtTime(1, t + INTRO_MUSIC_IN + 4);   // music: fades in, after the fall
+  Object.assign(music, { wait: INTRO_MUSIC_IN, n: 0 });
+}
+// the drone (beating low saws a tritone apart, rising a little as a filter opens), cut dead by the
+// snap (a bright crack of noise, a click and a low thump). Straight to the speakers, not via sfxOut.
+function introSound(t) {
+  const snap = t + INTRO_SWELL, out = actx.createGain();
+  out.gain.value = DRONE_VOL;
+  out.connect(actx.destination);
+  const lp = actx.createBiquadFilter(), drone = actx.createGain();
+  lp.type = 'lowpass'; lp.Q.value = 5;
+  lp.frequency.setValueAtTime(120, t);
+  lp.frequency.exponentialRampToValueAtTime(1800, snap);
+  drone.gain.setValueAtTime(0, t);
+  drone.gain.linearRampToValueAtTime(0.12, t + 0.15);
+  drone.gain.exponentialRampToValueAtTime(0.4, snap);
+  drone.gain.setValueAtTime(0, snap);
+  lp.connect(drone).connect(out);
+  for (const [hz, wave, level] of [[55, 'sawtooth', 1], [55.8, 'sawtooth', 1], [77.8, 'square', 0.5], [110, 'sine', 0.8]]) {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = wave;
+    o.frequency.setValueAtTime(hz, t);
+    o.frequency.exponentialRampToValueAtTime(hz * 1.06, snap);
+    g.gain.value = level;
+    o.connect(g).connect(lp);
+    o.start(t); o.stop(snap + 0.05);
+  }
+  const rumble = actx.createBufferSource(), bp = actx.createBiquadFilter(), rg = actx.createGain();
+  rumble.buffer = sfxNoise; rumble.loop = true;
+  bp.type = 'bandpass'; bp.Q.value = 1.5;
+  bp.frequency.setValueAtTime(250, t);
+  bp.frequency.exponentialRampToValueAtTime(900, snap);
+  rg.gain.setValueAtTime(0, t);
+  rg.gain.linearRampToValueAtTime(0.25, snap);
+  rg.gain.setValueAtTime(0, snap);
+  rumble.connect(bp).connect(rg).connect(out);
+  rumble.start(t); rumble.stop(snap + 0.05);
+  introSnapSound(snap);
+}
+// a finger snap: a sharp, bright crack of noise with a little woody pop and the soft knock of the
+// finger landing on the palm, then a room and a couple of fading echoes
+function introSnapSound(t) {
+  const out = actx.createGain(), limit = actx.createDynamicsCompressor(); // (the limiter keeps it from clipping)
+  out.gain.value = SNAP_VOL;
+  limit.threshold.value = -6; limit.ratio.value = 12; limit.attack.value = 0.001;
+  out.connect(limit).connect(actx.destination);
+  const echo = actx.createDelay(1), fb = actx.createGain(), dark = actx.createBiquadFilter(), wet = actx.createGain();
+  echo.delayTime.value = 0.19; fb.gain.value = 0.38;               // echoes: each one quieter and duller
+  dark.type = 'lowpass'; dark.frequency.value = 2600;
+  wet.gain.value = 0.5;
+  echo.connect(dark).connect(fb).connect(echo);
+  dark.connect(wet).connect(out);
+  const room = actx.createConvolver(), roomWet = actx.createGain(); // a short, dark room tail
+  const n = Math.floor(actx.sampleRate * 1.4), ir = actx.createBuffer(2, n, actx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = ir.getChannelData(c);
+    for (let i = 0, y = 0; i < n; i++) { y += 0.3 * (Math.random() * 2 - 1 - y); d[i] = y * Math.pow(1 - i / n, 4); }
+  }
+  room.buffer = ir; roomWet.gain.value = 0.9;
+  room.connect(roomWet).connect(out);
+  const snap = actx.createGain();                                   // dry + both sends
+  snap.connect(out); snap.connect(echo); snap.connect(room);
+  for (const [freq, q, gain, decay] of [[2600, 1.1, 2.4, 0.045], [6000, 0.7, 0.9, 0.012]]) { // crack, its sizzle
+    const src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+    src.buffer = sfxNoise;
+    f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(gain, t + 0.0008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+    src.connect(f).connect(g).connect(snap);
+    src.start(t, Math.random() * 0.5); src.stop(t + decay + 0.02);
+  }
+  for (const [from, to, gain, decay] of [[1500, 950, 0.3, 0.025], [240, 110, 0.35, 0.05]]) { // pop, palm
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.setValueAtTime(from, t);
+    o.frequency.exponentialRampToValueAtTime(to, t + decay);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(gain, t + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+    o.connect(g).connect(snap);
+    o.start(t); o.stop(t + decay + 0.02);
+  }
 }
 
 // ---------- right of way ----------
@@ -938,6 +1220,7 @@ function rampGeometry() {
   quad([x0, 0, -w], [x0, 0, w], [xs, H, w], [xs, H, -w], RAMP_COLS.slope);   // the slope
   quad([xs, H, -w], [xs, H, w], [x1, H, w], [x1, H, -w], RAMP_COLS.top);     // flat top
   quad([x1, H, -w], [x1, H, w], [x1, 0, w], [x1, 0, -w], RAMP_COLS.back);    // back wall
+  quad([x0, 0, w], [x0, 0, -w], [x1, 0, -w], [x1, 0, w], RAMP_COLS.back);    // underside (void: seen as it tips into the pit)
   for (const z of [-w, w]) {                                                  // the two sides
     tri([x0, 0, z], [x1, 0, z], [x1, H, z], RAMP_COLS.side);
     tri([x0, 0, z], [x1, H, z], [xs, H, z], RAMP_COLS.side);
@@ -1160,9 +1443,13 @@ function updateRamp(dt) {
   rampSummit(dt);
 }
 
-// The payoff for getting your llama to the top: its coat goes rainbow, it pronks a few times and
-// a little jingle plays. Once per climb (it has to get back down to the ground first).
-const SUMMIT_LEN = 4;      // seconds of rainbow
+// The payoff for getting your llama to the top. 'glitch': it glitches, over a low, broken hum, and
+// a shower rolls in (or, if it's already raining, lightning). 'rainbow': its coat goes rainbow, it
+// pronks a few times and a little jingle plays. Once per climb (it has to get back down first).
+const SUMMIT_FX = 'glitch'; // ← 'glitch' or 'rainbow'
+const SUMMIT_LEN = 4;      // seconds of glitch / rainbow
+const GLITCH_VOL = 0.012;  // its little digital chirps (0: silent)
+const GLITCH_HUM = 0.05;   // its low, distorted hum (0: silent)
 let summitReady = true, summitT = -1;
 function rampSummit(dt) {
   const p = player.group.position;
@@ -1170,19 +1457,119 @@ function rampSummit(dt) {
   if (summitReady && p.y > RAMP_H - 0.01 && onRamp(p.x, p.z)) {
     summitReady = false; summitT = 0;
     player.summit = true;
-    player.celebrate();
-    sfx.summit(p);
+    if (SUMMIT_FX === 'glitch') { if (!glitch.snd) glitch.snd = glitchSound(p); summitStorm(); }   // sfx:, rain: a shower, or lightning
+    else { player.celebrate(); sfx.summit(p); }
   }
   if (summitT < 0) return;
   summitT += dt;
-  player.rainbow = smooth(0, 0.3, summitT) * (1 - smooth(SUMMIT_LEN - 0.8, SUMMIT_LEN, summitT));
-  if (summitT > SUMMIT_LEN) { summitT = -1; player.rainbow = 0; player.summit = false; }
+  if (glitch.snd && summitT > SUMMIT_LEN - 0.7) { glitchSoundEnd(glitch.snd); glitch.snd = null; } // sfx: winds down with the fade
+  const k = smooth(0, 0.3, summitT) * (1 - smooth(SUMMIT_LEN - 0.8, SUMMIT_LEN, summitT));
+  if (SUMMIT_FX === 'glitch') summitGlitch = k; else player.rainbow = k;
+  if (summitT > SUMMIT_LEN) { summitT = -1; player.rainbow = 0; summitGlitch = 0; player.summit = false; }
+}
+// The glitch: just after each frame is drawn, the patch of screen around your llama is copied onto
+// a 2D canvas above it, broken up — its colour channels pulled apart, slices shoved sideways, a
+// frame held now and then — in stutters, with clean frames between.
+let summitGlitch = 0;      // 0 off … 1 strongest
+const glitch = { cv: null, g: null, work: null, red: null, cyan: null, hold: 0, on: false, snd: null };
+if (FIXED_SPEED === null) {    // (the summit's glitch, and blight: your llama's)
+  glitch.cv = document.createElement('canvas');
+  glitch.cv.id = 'glitch';
+  document.body.insertBefore(glitch.cv, document.getElementById('rain-tint')); // (under the rain's tint)
+  glitch.g = glitch.cv.getContext('2d');
+  for (const k of ['work', 'red', 'cyan']) glitch[k] = document.createElement('canvas');
+}
+function drawGlitch() {
+  const { cv, g, work, red, cyan } = glitch, src = renderer.domElement, glitchK = Math.max(summitGlitch, blightGlitch);
+  if (glitchK <= 0) { if (glitch.on) { g.clearRect(0, 0, cv.width, cv.height); glitch.on = false; } return; }
+  if (cv.width !== src.width || cv.height !== src.height) { cv.width = src.width; cv.height = src.height; }
+  if (glitch.hold-- > 0) return;                         // a held (frozen) frame
+  g.clearRect(0, 0, cv.width, cv.height);
+  glitch.on = false;
+  glitch.hold = Math.floor(Math.random() * 4);
+  if (Math.random() > 0.3 + 0.55 * glitchK) { glitchGate(false); return; } // a clean frame (and silence)
+  glitchGate(true);
+  const s = src.width / innerWidth, r = player.screenRect(), pad = (r.x1 - r.x0) * 0.3;
+  const x0 = Math.max(0, Math.floor((r.x0 - pad) * s)), x1 = Math.min(src.width, Math.ceil((r.x1 + pad) * s));
+  const y0 = Math.max(0, Math.floor((r.y0 - pad * 0.3) * s)), y1 = Math.min(src.height, Math.ceil((r.y1 + pad * 0.3) * s));
+  const w = x1 - x0, h = y1 - y0;
+  if (w < 4 || h < 4) return;
+  for (const c of [work, red, cyan]) if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const wg = work.getContext('2d');
+  if (Math.random() < 0.75) {   // channels apart: red from a little to one side, green + blue from the other
+    const d = Math.round((2 + Math.random() * 6) * s * glitchK);
+    for (const [c, col, off] of [[red, '#f00', -d], [cyan, '#0ff', d]]) {
+      const cg = c.getContext('2d');
+      cg.globalCompositeOperation = 'source-over';
+      cg.drawImage(src, x0 - off, y0, w, h, 0, 0, w, h);
+      cg.globalCompositeOperation = 'multiply';
+      cg.fillStyle = col;
+      cg.fillRect(0, 0, w, h);
+    }
+    wg.globalCompositeOperation = 'source-over'; wg.drawImage(red, 0, 0);
+    wg.globalCompositeOperation = 'lighter'; wg.drawImage(cyan, 0, 0);
+    wg.globalCompositeOperation = 'source-over';
+  } else wg.drawImage(src, x0, y0, w, h, 0, 0, w, h);
+  g.drawImage(work, x0, y0);
+  const unit = Math.max(2, Math.round(2 * s));          // slices shoved sideways (in chunky steps)
+  for (let i = 0, n = 1 + Math.floor(Math.random() * 5 * glitchK); i < n; i++) {
+    const sh = unit * (1 + Math.floor(Math.random() * h * 0.12 / unit)), sy = Math.floor(Math.random() * (h - sh));
+    const dx = Math.round((Math.random() - 0.5) * w * 0.35 * glitchK / unit) * unit;
+    g.drawImage(work, 0, sy, w, sh, x0 + dx, y0 + sy, w, sh);
+  }
+  glitch.on = true;
+  if (Math.random() < 0.35) sfx.glitch(player.group.position);   // sfx:
+}
+// sfx: the glitch's hum — two low saws a semitone apart (they beat), crushed through a stepped
+// distortion, plus a crackle. A gate cuts it in and out in step with the picture (on while a
+// glitch frame shows, silent on clean ones), its pitch skips now and then, and at the end it
+// winds down like a tape stopping. It opens on a low boom.
+function glitchSound(pos, boom = true) {
+  const at = sfxAt(pos); if (!at || !GLITCH_HUM) return null;
+  const [v, pan] = at, t = actx.currentTime;
+  if (boom) sfxTone(t, pan, { from: 95, to: 28, gain: 0.4 * v, decay: 0.9 });   // the boom
+  const gate = actx.createGain(), crush = actx.createWaveShaper(), lp = actx.createBiquadFilter(), pn = actx.createStereoPanner();
+  const curve = new Float32Array(512);
+  for (let i = 0; i < 512; i++) curve[i] = Math.round(Math.tanh((i / 255.5 - 1) * 5) * 3) / 3; // a few hard steps
+  crush.curve = curve;
+  lp.type = 'lowpass'; lp.frequency.value = 1600;
+  gate.gain.value = 0;
+  pn.pan.value = pan;
+  crush.connect(lp).connect(gate).connect(pn).connect(sfxOut);
+  const oscs = [55, 58.27].map((hz) => {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'sawtooth'; o.frequency.value = hz; g.gain.value = 0.5;
+    o.connect(g).connect(crush);
+    o.start(t);
+    return o;
+  });
+  const crackle = actx.createBufferSource(), bp = actx.createBiquadFilter(), cg = actx.createGain();
+  crackle.buffer = sfxNoise; crackle.loop = true;
+  bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 0.8; cg.gain.value = 0.25;
+  crackle.connect(bp).connect(cg).connect(gate);
+  crackle.start(t);
+  return { gate, oscs, crackle, level: GLITCH_HUM * v };
+}
+function glitchGate(on) {
+  const snd = glitch.snd; if (!snd) return;
+  const t = actx.currentTime;
+  snd.gate.gain.setTargetAtTime(on ? snd.level * Math.max(summitGlitch, blightGlitch) : 0, t, 0.004);
+  if (on && Math.random() < 0.3) for (const o of snd.oscs) o.detune.setValueAtTime(pick([-1200, -500, 0, 0, 300, 700]), t); // a skip
+}
+function glitchSoundEnd(snd) {
+  const t = actx.currentTime;
+  snd.gate.gain.cancelScheduledValues(t);
+  snd.gate.gain.setTargetAtTime(snd.level, t, 0.01);            // held on through the wind-down...
+  snd.gate.gain.setTargetAtTime(0, t + 0.45, 0.08);              // ...then gone
+  for (const o of snd.oscs) { o.detune.setValueAtTime(0, t); o.frequency.exponentialRampToValueAtTime(o.frequency.value * 0.12, t + 0.7); o.stop(t + 1); }
+  snd.crackle.stop(t + 1);
 }
 
 function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: heading0 = 0 }) {
   const self = { id, hovered: false, climbs: brainKind === 'cursor' }; // ramp: only yours climbs
   const mine = brainKind === 'cursor';  // sfx: only yours makes sounds (besides the ball)
   const colNear = new THREE.Color(coat.body), colFar = new THREE.Color(coat.far);
+  const baseNear = colNear.clone(), baseFar = colFar.clone(), baseEye = new THREE.Color(); // blight: the healthy colours
   const llama = new THREE.Group();
   llama.position.set(x, 0, z);
   scene.add(llama);
@@ -1196,8 +1583,11 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     return obj;
   }
 
+  // blight: everything hangs off a pivot group, so the whole llama (legs too) can tip onto its side
+  const tipG = new THREE.Group();
+  llama.add(tipG);
   const rig = new THREE.Group();  // gets bounce + pitch + roll
-  llama.add(rig);
+  tipG.add(rig);
 
   const body = part(capsule(1.2, 3.35), colNear);
   body.rotation.z = Math.PI / 2;
@@ -1245,12 +1635,16 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   // face: one mesh for both eyes (blinks by squashing it), one for nose + mouth
   // eyes: pale on dark coats, dark on light coats (so they never disappear into the fur)
   const eyeColor = new THREE.Color();
-  const setEyes = () => eyeColor.set(colNear.getHSL({}).l > 0.55 ? 0x333333 : C.eye);
+  const setEyes = () => { eyeColor.set(colNear.getHSL({}).l > 0.55 ? 0x333333 : C.eye); baseEye.copy(eyeColor); };
   setEyes();
   const eyePair = part(EYES_GEO, eyeColor, { shadow: false });
   eyePair.position.set(0.72, 0.42, 0);
   headYaw.add(eyePair);
   const eyes = [eyePair];
+  const xEyes = part(X_EYES_GEO, eyeColor, { shadow: false }); // blight: shown once it has keeled over
+  xEyes.position.copy(eyePair.position);
+  xEyes.scale.setScalar(0);
+  headYaw.add(xEyes);
   const muzzle = part(MUZZLE_GEO, null, { tint: false, shadow: false, material: MUZZLE_MAT });
   headYaw.add(muzzle);
 
@@ -1266,7 +1660,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   function makeLeg({ hipX, footX, side, front, L1, L2 }) {
     const color = new THREE.Color(coat.body); // lerped toward the far shade each frame
     const root = new THREE.Group();
-    llama.add(root);
+    tipG.add(root);
     return {
       hip: new THREE.Vector3(hipX, HIP_Y, side * LEG_Z), // relative to body center
       footX, side, front, L1, L2, color, root,
@@ -1306,16 +1700,21 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   let pet = 0, petS = 0, petting = false, petHeart = 0, petHum = 0; // pet: contentment from being stroked
   let hopT = -1;                  // single happy hop, seconds (-1 = not hopping)
   let hopBig = 1;                 // how high that hop goes (a ball hit: higher)
+  let dropT = -1;                 // intro: dropped into the scene, seconds (-1 = not dropping)
+  let camLook = 0;                // intro: then a look at the camera (seconds left; it starts after a beat)
   let startleT = 0, startleYaw = 0; // hit by a ball: stopped short, looking where it came from
   let shakeIn = -1, shakeT = -1;  // rain: a shake-off after a shower (countdown to it, then its timeline)
   let dance = null;               // { t } – pronking happy dance
   let goalBall = null;           // ball being walked to (or, piles: a piece someone clicked)
   let pieceGoal = null;           // piles: a piece it's been asked to kick
   let act = null;                 // { t, ball, bx, bz, side } – a kick in progress
+  let fall = null;                // blight: { t, side, k, up } keeling over / lying on its side / getting back up
+  let fallWant = false;           // blight: it's time (waits until it's standing and not busy)
 
   // hit by a ball: stops short with a big startled jump (or scrambles up if lying down), perks
   // up, says "bip-bip", and looks toward where the ball came from for a moment
   function bonk(from) {
+    if (fall) return;                              // blight: it doesn't react any more
     sfx.boop(llama.position);
     perk = 1;
     brain.onPoke();
@@ -1333,7 +1732,23 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     if (i >= 0) piles.targets.splice(i, 1);
     pieceGoal = null; if (goalBall?.piece) goalBall = null;
   }
+  // blight: before it goes it staggers round to (roughly) face you or face away — whichever's
+  // nearer — so it falls across the screen, flat on its side, legs out sideways
+  function keelFace() {
+    const a = CAM_HEADING + (Math.random() - 0.5) * 0.6, b = a + Math.PI;
+    return Math.abs(wrap(a - heading)) < Math.abs(wrap(b - heading)) ? a : b;
+  }
+  // ...and which side it falls to: its preferred one, unless the ramp or another llama is there
+  function keelSide() {
+    const s = KEEL_SIDE, p = llama.position;
+    const blocked = (d) => {
+      const x = p.x + Math.sin(heading) * d * 4.5, z = p.z + Math.cos(heading) * d * 4.5;
+      return onRamp(x, z, 2) || llamas.some((o) => o !== self && Math.hypot(o.group.position.x - x, o.group.position.z - z) < 4);
+    };
+    return blocked(s) && !blocked(-s) ? -s : s;
+  }
   function poke(quiet = false) {
+    if (fall) return;                              // blight:
     if (!mine && !quiet) sfx.boop(llama.position); // sfx: (yours: its hop makes the sound)
     joy += 1;
     perk = 1;
@@ -1356,7 +1771,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   } : {
     // stroll to a random spot, hang around a while (sometimes lie down for a nap), repeat
     goal: null, dest: new THREE.Vector3(), stopDist: 1.0, maxSpeed: 3.2, ballSpeed: 9, turnDist: 1.5,
-    wait: 1 + Math.random() * 3, idleT: 0, napFor: 0,
+    wait: Math.random() * 0.5, idleT: 0, napFor: 0,   // (sets off almost straight away: the scene's alive from the first frame)
     tick(dt) {
       this.idleT += dt;
       // gather: while following, head for the slot behind the leader; on release, wander again
@@ -1405,7 +1820,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
         // somewhere free: away from every other llama, where they're heading, and the ramp
         for (let i = 0; i < 16; i++) {
           randomGroundPoint(this.dest, llama.position, 8);
-          const free = !onRamp(this.dest.x, this.dest.z, 5) /* ramp: */ && llamas.every((o) => o === self ||
+          const free = !onRamp(this.dest.x, this.dest.z, 5) /* ramp: */ && !(vd.on && Math.hypot(this.dest.x - vd.x, this.dest.z - vd.z) < vd.r + 8) /* void: */ && llamas.every((o) => o === self ||
             (Math.hypot(o.group.position.x - this.dest.x, o.group.position.z - this.dest.z) > DEST_CLEAR &&
              !(o.dest && Math.hypot(o.dest.x - this.dest.x, o.dest.z - this.dest.z) < DEST_CLEAR)));
           if (free) break;
@@ -1417,7 +1832,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     idle() { return this.goal ? 0 : this.idleT; },
     best: Infinity, stuckT: 0,
     greet: null, greetCool: 8 + Math.random() * 20,
-    canGreet() { return !this.greet && this.greetCool <= 0 && !this.following && !self.yielding && this.napFor <= 0 && !goalBall && !act && kushT === 0 && !dance && pet < 0.15; },
+    canGreet() { return (self.sick ?? 0) < 0.3 && !fall /* blight: the sick keep to themselves */ && !this.greet && this.greetCool <= 0 && !this.following && !self.yielding && this.napFor <= 0 && !goalBall && !act && kushT === 0 && !dance && pet < 0.15; },
     startGreet(other, first) { this.greet = { other, t: 0, met: 0, first }; self.greeting = other; this.goal = null; },
     endGreet() {
       this.greet = null; self.greeting = null; this.goal = null; this.stopDist = 1.0;
@@ -1428,16 +1843,34 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   };
 
   function update(dt) {
+    if (self.gone) return;                          // void: falling into it — moved from outside
     time += dt;
 
+    // blight: sickness drains the coat toward a pale grey, slows it down, makes it unsteady
+    const sick = self.sick ?? 0;
+    const drain = fall ? 1 : smooth(0.08, 1, sick), weak = fall ? 1 : smooth(0.4, 1, sick);
+    if (drain > 0 || self.drained) {
+      for (const [c, b] of [[colNear, baseNear], [colFar, baseFar]]) {
+        const h = b.getHSL({});
+        c.setHSL(h.h, h.s * (1 - 0.9 * drain), lerp(h.l, 0.7, 0.5 * drain));
+      }
+      eyeColor.set(colNear.getHSL(_hsl).l > 0.55 ? _dimEye : C.eye);  // stays in contrast with the paling coat
+      self.drained = drain > 0;
+    }
+    if (fallWant && !fall && kushT === 0 && !act && !dance && hopT < 0 && dropT < 0) {
+      fall = { t: 0, side: 0, k: 0, up: false, shift: 0, face: keelFace() };
+      fallWant = false;
+    }
+
     // --- behaviour timers ---
-    brain.tick(dt);
+    if (!fall) brain.tick(dt);
     joy = Math.max(0, joy - dt * 0.25);
     perk = Math.max(0, perk - dt * 0.8);
     smile = Math.max(0, smile - dt * 0.4);
 
     // pet: stroked enough, it settles — stops, closes its eyes, tilts its head, hums, and now and
     // then a heart floats up. It fades back to normal a little while after the stroking stops.
+    if (fall) pet = 0;                              // blight:
     pet = Math.max(0, pet - dt * 0.25);
     if (!petting && pet > 0.45) { petting = true; petHeart = 0.5; petHum = 0.15; }
     if (petting && pet < 0.2) petting = false;
@@ -1450,7 +1883,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     }
 
     if (pieceGoal && (pieceGoal.t += dt) > 12) dropPieceGoal();       // piles: couldn't get there, never mind
-    if (!act) goalBall = pieceGoal ?? (FIXED_SPEED === null && !self.followLeader /* gather: in line, ignore balls */
+    if (!act) goalBall = fall ? null : pieceGoal ?? (FIXED_SPEED === null && !self.followLeader /* gather: in line, ignore balls */
       ? nearestBall(id, llama.position.x, llama.position.z, goalBall) : null);
     if (goalBall && kushT > 0 && kushDir !== -1) kushDir = -1; // a ball is worth getting up for
 
@@ -1495,14 +1928,14 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     startleT = Math.max(0, startleT - dt);
     // rain: shower over — after a moment, a quick full-body shake, flinging off a few droplets
     if (shakeIn > 0 && (shakeIn -= dt) <= 0) {
-      if (kushT === 0 && !dance) {
+      if (kushT === 0 && !dance && !fall) {
         shakeT = 0;
         sfx.shake(llama.position, mine);                // sfx: its own little jingle
         puff(llama.position.x, llama.position.y + 4.6, llama.position.z, 10, { col: DROPLET_COL, r: 0.09, v: 3, vy: 2.5, g: 14, spread: 1.4 });
       }
     }
     if (shakeT >= 0 && (shakeT += dt) > 0.9) shakeT = -1;
-    const busy = kushT > 0 || dance !== null || act !== null || pet > 0.15 || startleT > 0 || shakeT >= 0; // (pet: pauses as soon as you start stroking)
+    const busy = fall !== null || kushT > 0 || dance !== null || act !== null || pet > 0.15 || startleT > 0 || shakeT >= 0; // (pet: pauses as soon as you start stroking)
 
     // --- steering: walk to a ball if there is one, else wherever the brain wants to go ---
     const goal = goalBall ? goalBall.pos : (brain.goal || llama.position);
@@ -1526,7 +1959,11 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
         const op = o.group.position, ox = op.x - llama.position.x, oz = op.z - llama.position.z;
         const ahead = ox * c - oz * sn, side = ox * sn + oz * c; // llama-local: +x ahead, +z right
         if (ahead < 0 || ahead > Math.min(look, dist + CONTACT) || Math.abs(side) > AVOID_WIDTH) continue;
-        if (mine && o.yielding) { blockAhead = Math.min(blockAhead, ahead); continue; } // it's stepping aside: just wait
+        if (mine && !o.fallen) {                       // yours has right of way: it steers round the living but never
+          if (Math.hypot(op.x - goal.x, op.z - goal.z) < CONTACT) continue; // stops for them (they're nudged aside: personal space)
+          steer += (side >= 0 ? 1 : -1) * (1 - ahead / look) * (1 - Math.abs(side) / AVOID_WIDTH);
+          continue;
+        }
         if (o === self.followLeader) {                 // gather: trail the leader, only dodge it up close
           leaderAhead = Math.min(leaderAhead, ahead);
           if (ahead > CONTACT + 1) continue;
@@ -1558,6 +1995,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     // ramp: always walk on it, and slow to a walk well before stepping onto it
     if (self.climbs && (onRamp(llama.position.x, llama.position.z, 1) ||
         (onRamp(goal.x, goal.z) && onRamp(llama.position.x, llama.position.z, 14)))) vTarget = Math.min(vTarget, RAMP_WALK);
+    vTarget *= (1 - 0.55 * weak) * (1 - 0.45 * weak * (0.5 + 0.5 * Math.sin(time * 2.1))); // blight: slower, in lurches
     if (busy) vTarget = 0;
     // smooth approach with capped acceleration
     const dv = damp(speed, vTarget, 2.2, dt) - speed;
@@ -1593,6 +2031,12 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       const face = CAM_HEADING + (wrap(heading - CAM_HEADING) >= 0 ? 0.35 : -0.35);
       wantOmega = clamp(wrap(face - heading) * 5, -5, 5);
     }
+    if (camLook > 0 && camLook < 2.1 && speed < 0.5) {   // intro: after landing, turns a little toward you
+      const face = CAM_HEADING + (wrap(heading - CAM_HEADING) >= 0 ? 0.6 : -0.6);
+      wantOmega = clamp(wrap(face - heading) * 3, -3, 3);
+    }
+    if (fall && !fall.up && fall.t < KEEL_SWAY - 0.3) wantOmega = clamp(wrap(fall.face - heading) * 2.5, -1.4, 1.4); // blight: staggers round
+    else if (weak > 0 && speed > 0.3) wantOmega += weak * 1.1 * Math.sin(time * 1.3);   // blight: a drunken weave
     omega = damp(omega, wantOmega, 4, dt);
     heading += omega * dt;
     llama.rotation.y = heading;
@@ -1672,12 +2116,26 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       hopT += dt; hopY = hopCurve(hopT) * hopBig; if (hopT > 0.68) hopT = -1;
     }
     hopY += danceY;
+    // intro: dropped in — falls straight down, stiff-legged, then a hard squash on landing
+    let dropY = 0;
+    if (camLook > 0) camLook -= dt;
+    if (dropT >= 0) {
+      const land = Math.sqrt(2 * DROP_H / DROP_G), u = (dropT += dt) - land;
+      if (u < 0) dropY = DROP_H - 0.5 * DROP_G * dropT * dropT;
+      else {
+        if (u < dt) { camLook = 2.4; puff(llama.position.x, llama.position.y, llama.position.z, 12, { v: 3 }); sfx.land(llama.position); } // dust:, sfx:
+        hopY -= 0.45 * (u < 0.05 ? smooth(0, 1, u / 0.05) : 1 - smooth(0, 1, (u - 0.05) / 0.3));
+        if (u > 0.35) dropT = -1;
+      }
+    }
     const wiggle = dance ? Math.sin(dance.t * 16) * smooth(PRONK * 3 - 0.2, PRONK * 3, dance.t) * (1 - smooth(DANCE_LEN - 0.3, DANCE_LEN, dance.t)) : 0;
-    rig.position.y = yS + hopY + lift;
+    rig.position.y = yS + hopY + dropY + lift;
     const shake = shakeT >= 0 ? Math.sin(shakeT * 38) * 0.16 * (1 - shakeT / 0.9) : 0; // rain: the shake-off
-    rig.rotation.set(rollS + wiggle * 0.08 + shake, 0, pitchS + tilt + Math.max(0, hopY) * (dance ? 0.03 : 0.08));
+    const wobble = (fall ? 0 : weak) * (0.13 * Math.sin(time * 1.3) + 0.05 * Math.sin(time * 3.1)); // blight: unsteady, leaning side to side
+    rig.rotation.set(rollS + wiggle * 0.08 + shake + wobble, 0, pitchS + tilt + Math.max(0, hopY) * (dance ? 0.03 : 0.08));
     // a single hop tucks the legs; pronking keeps them stiff (feet leave the ground with the body)
     if (hopY > 0) for (const [, leg] of legList) leg.fy += hopY * (dance ? 1 : 0.8);
+    if (dropY > 0) for (const [, leg] of legList) leg.fy += dropY;   // intro: legs hang straight as it falls
 
     // kush: lying down folds the front first, then the hind; getting up raises the hind first
     const tF = kushDir >= 0 ? smoother(seg(kushT, 0, 0.6)) : smoother(seg(kushT, 0, 0.7));
@@ -1714,10 +2172,52 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       leg.fx = x; leg.fy = y;
       rig.rotation.z += 0.06 * smooth(0, 0.3, t) * (1 - smooth(0.3, 0.45, t)) - 0.04 * smooth(0.35, 0.45, t) * (1 - smooth(0.6, 1.0, t));
     }
+    // blight: keeling over — it stops and sways, harder and harder, then tips onto its side from the
+    // edge of its hooves (legs going stiff), lands with a soft thud, and lies there, eyes X X.
+    // Getting back up (blight switched off) is the tip in reverse.
+    let dead = 0;
+    if (fall) {
+      const t = fall.up ? KEEL_SWAY + KEEL_TIP : (fall.t += dt);
+      if (fall.up) fall.k = Math.max(0, fall.k - dt / 1.1);
+      else if (t > KEEL_SWAY) {
+        if (!fall.side) fall.side = keelSide();
+        const u = (t - KEEL_SWAY) / KEEL_TIP;
+        if (u >= 1 && fall.k < 1) {                 // lands: dust where its body hits, and a soft thud
+          const sz = fall.side * 3.5;
+          puff(llama.position.x + Math.sin(heading) * sz, 0, llama.position.z + Math.cos(heading) * sz, 10, { spread: 2.2 }); // dust:
+          sfx.keel(llama.position);                   // sfx:
+        }
+        fall.k = u < 1 ? u * u : 1;                 // falls like a weight: slow, then fast
+      }
+      const settle = !fall.up && t > KEEL_SWAY + KEEL_TIP ? Math.sin(Math.min(1, (t - KEEL_SWAY - KEEL_TIP) / 0.3) * Math.PI) * 0.07 : 0; // a small rebound
+      const k = fall.up ? smoother(fall.k) : fall.k;
+      dead = fall.up ? 0 : smooth(KEEL_SWAY + KEEL_TIP - 0.05, KEEL_SWAY + KEEL_TIP, t);
+      if (!fall.up) rig.rotation.x += (Math.sin(t * 4.2) * 0.14 + Math.sin(t * 9.5) * 0.04) * smooth(0, KEEL_SWAY, t) * (1 - k); // the sway before it goes
+      const a = (Math.PI / 2 + KEEL_OVER) * (k - settle), th = (fall.side || 1) * a, pz = (fall.side || 1) * KEEL_EDGE;
+      tipG.rotation.x = th;
+      // pivot on the edge of the hooves; past its side, lifted so the body still rests on the ground
+      const rest = Math.max(0, KEEL_EDGE - (RIG_Y * Math.cos(a) + KEEL_EDGE * Math.sin(a)));
+      // lying there, it counts as being where its body is (so the others walk round the body, not the
+      // hooves): the llama's own spot moves under it, the pivot moves back by the same amount
+      const shift = !fall.up && dead >= 1 ? fall.side * KEEL_BODY : 0;
+      if (shift !== fall.shift) {
+        const d = shift - fall.shift;
+        llama.position.x += Math.sin(heading) * d; llama.position.z += Math.cos(heading) * d;
+        fall.shift = shift;
+      }
+      tipG.position.set(0, pz * Math.sin(th) + rest, pz * (1 - Math.cos(th)) - fall.shift);
+      const stiff = fall.up ? k : smooth(0, 1, (t - KEEL_SWAY) / KEEL_TIP);
+      for (const [, leg] of legList) {               // legs go straight and stiff, a little splayed
+        leg.fx = lerp(leg.fx, leg.hip.x + (leg.front ? 0.7 : -0.8), stiff);
+        leg.fy = lerp(leg.fy, rig.position.y + HIP_Y - (leg.L1 + leg.L2) * 0.97, stiff);
+      }
+      if (fall.up && fall.k === 0) { fall = null; tipG.rotation.x = 0; tipG.position.set(0, 0, 0); }
+    }
+    const alive = 1 - dead;
     const pitchA = rig.rotation.z, fold = Math.max(fF, fH);
 
     // breathing when idle
-    body.scale.x = 1 + 0.012 * Math.sin(time * 1.7) * (1 - move);
+    body.scale.x = 1 + 0.012 * Math.sin(time * 1.7) * (1 - move) * alive;
 
     // --- neck & head ---
     // walk: gentle nod; gallop: the neck pumps forward and down as the front feet land, swings up while gathered
@@ -1726,49 +2226,54 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     const danceNeck = dance ? -0.12 * Math.max(0, -danceY) + 0.06 * Math.max(0, danceY) : 0;
     neck.rotation.z = NECK_TILT - wGallop * 0.12 - neckPump - pitchA * lerp(0.4, 1, fold) + fold * 0.05 + danceNeck
       - tilt * 0.6                                        // ramp: keep the neck upright on a slope
-      + Math.sin(cyc * 2) * (walkW * 0.035 + paceW * 0.02);
+      + Math.sin(cyc * 2) * (walkW * 0.035 + paceW * 0.02)
+      - 0.22 * weak;                                      // blight: head hangs
 
     // idle: glance around at random; hovered: look at the viewer; dancing: bob side to side;
     // otherwise follow the cursor
     lookT -= dt;
     if (lookT < 0) { lookYaw = (Math.random() * 2 - 1) * 0.9; lookNod = Math.random() * 0.25 - 0.08; lookT = 1.2 + Math.random() * 2.3; }
     let yawWant = lerp(clamp(diff, -0.9, 0.9) * 0.6, lookYaw, idleW);
-    if (self.hovered && speed < 0.5) yawWant = clamp(wrap(CAM_HEADING - heading), -0.9, 0.9);
+    if ((self.hovered || (camLook > 0 && camLook < 2.1)) && speed < 0.5) yawWant = clamp(wrap(CAM_HEADING - heading), -0.9, 0.9); // intro: the look after landing
     if (dance) yawWant = Math.sin(dance.t * 9) * 0.45;
     if (startleT > 0) yawWant = clamp(startleYaw, -0.9, 0.9);   // hit by a ball: look at where it came from
     if (act && act.t > 0.38) {                // follow the ball with the eyes
       const ball = loose.find((b) => b.tr === act.ball);
       if (ball) yawWant = clamp(wrap(Math.atan2(-(ball.tr.pos.z - llama.position.z), ball.tr.pos.x - llama.position.x) - heading), -0.9, 0.9);
     }
+    yawWant += weak * 0.35 * Math.sin(time * 0.9);    // blight: head lolling
+    if (fall) yawWant = 0;                             // blight: down, it doesn't look at anything
     yawLook = damp(yawLook, yawWant, dance ? 12 : 4, dt);
-    nodS = damp(nodS, lookNod * idleW, 3, dt);
+    nodS = damp(nodS, fall ? 0 : lookNod * idleW, 3, dt);
     head.rotation.z = -(neck.rotation.z + pitchA) * 0.8 + nodS;
     headYaw.rotation.y = yawLook;
     headYaw.rotation.x = petS * 0.3;                     // pet: head tilted, leaning into it
 
 
     // tail: droops at rest, lifts when galloping or happy, wags while dancing
-    tail.rotation.z = 0.55 - wGallop * 0.7 - perk * 0.35 + Math.sin(cyc * 2) * 0.06 * move + Math.sin(time * 1.1) * 0.03;
+    tail.rotation.z = 0.55 - wGallop * 0.7 - perk * 0.35 + Math.sin(cyc * 2) * 0.06 * move + Math.sin(time * 1.1) * 0.03 * alive + 0.25 * weak; // blight: droops
     tail.rotation.y = dance ? Math.sin(dance.t * 20) * 0.5 : 0;
 
     // ears: flop back with speed, occasional idle twitch
     for (const [i, ear] of ears.entries()) {
       ear.next -= dt;
-      if (ear.next < 0) { ear.twitch = 1; ear.next = 2 + Math.random() * 5; }
+      if (ear.next < 0 && alive) { ear.twitch = 1; ear.next = 2 + Math.random() * 5; }
       ear.twitch = Math.max(0, ear.twitch - dt * 4);
-      ear.g.rotation.z = 0.18 + wGallop * 0.45 + neckPump * 0.6 + Math.sin(time * 1.3 + i) * 0.04
+      ear.g.rotation.z = 0.18 + wGallop * 0.45 + neckPump * 0.6 + Math.sin(time * 1.3 + i) * 0.04 * alive // (blight: the dead are still)
         + Math.sin(cyc * 2) * 0.05 * move + earFlop + Math.sin(ear.twitch * Math.PI) * 0.35
         // happy: ears perk forward and wiggle; dancing: they flap alternately
         - perk * 0.3 + perk * Math.sin(time * 28 + i * 2) * 0.12 + petS * 0.35 // pet: ears relax back
         + rainK * 0.3 + (shakeT >= 0 ? Math.sin(shakeT * 38 + i * 2) * 0.35 : 0) // rain: ears down; flapping in the shake
-        + (dance ? Math.sin(dance.t * 14 + i * Math.PI) * 0.4 : 0);
+        + (dance ? Math.sin(dance.t * 14 + i * Math.PI) * 0.4 : 0)
+        + 0.4 * weak;                                   // blight: ears down
     }
 
     // blink
     blinkT -= dt;
     const blink = blinkT < 0.12 && blinkT > 0 ? 0.1 : 1;
     if (blinkT < 0) blinkT = 2 + Math.random() * 4;
-    for (const e of eyes) e.scale.y = blink * (1 - 0.45 * smile) * (1 - 0.88 * petS) * (1 - 0.45 * rainK); // happy squint; pet: eyes closed; rain: a squint
+    for (const e of eyes) e.scale.set(alive, alive * blink * (1 - 0.45 * smile) * (1 - 0.88 * petS) * (1 - 0.45 * rainK) * (1 - 0.15 * weak), alive); // happy squint; pet: eyes closed; rain: a squint; blight: heavy-lidded
+    xEyes.scale.setScalar(dead);                       // blight: X X
 
   }
 
@@ -1813,6 +2318,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     colNear.set(c.body);
     colFar.set(c.far);
     setEyes();
+    baseNear.copy(colNear); baseFar.copy(colFar);   // blight:
     self.coat = c.body;
   }
   function dispose() {
@@ -1822,18 +2328,79 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
 
   Object.assign(self, {
     group: llama, head, parts, update, poseLegs, poke, bonk, screenRect, setCoat, dispose, coat: coat.body,
-    pet(px) { pet = Math.min(1, pet + px / 250); },      // pet: px of gentle stroking
+    pet(px) { if (!fall) pet = Math.min(1, pet + px / 250); }, // pet: px of gentle stroking
+    keel(now) {                                          // blight: keel over (now: already lying there)
+      if (fall && !fall.up) return;
+      fallWant = true; brain.onPoke();                   // (wakes it from a nap first)
+      if (now) { kushT = 0; kushDir = 0; fF = fH = 0; fallWant = false; heading = keelFace(); fall = { t: KEEL_SWAY + KEEL_TIP + 1, side: keelSide(), k: 1, up: false, shift: 0 }; }
+    },
+    rise() { fallWant = false; if (fall) fall.up = true; }, // blight: get back up
+    setFar(hex) { colFar.set(hex); baseFar.copy(colFar); }, // void: yours goes all black
+    tip: tipG,                                           // piles: its body follows the tip
     shakeOff(delay) { shakeIn = delay; },               // rain: shake off after this many seconds
     canGreet: () => brain.canGreet?.() ?? false,         // greet: (wanderers only)
-    canKick: () => !act && !pieceGoal && !self.followLeader && kushT === 0 && !dance && pet < 0.15, // piles:
+    canKick: () => !fall && !act && !pieceGoal && !self.followLeader && kushT === 0 && !dance && pet < 0.15, // piles:
     kickPiece(t) { pieceGoal = t; if (kushT > 0) kushDir = -1; },
     startGreet: (o, first) => brain.startGreet(o, first),
-    celebrate() { if (kushT > 0) kushDir = -1; dance = { t: 0 }; hopT = -1; }, // gather: finale dance
+    drop() { dropT = 0; hopT = -1; },                   // intro: appear in mid-air and fall
+    celebrate() { if (fall || fallWant) return; if (kushT > 0) kushDir = -1; dance = { t: 0 }; hopT = -1; }, // gather: finale dance (blight: not the dead)
   });
   // a live getter (Object.assign would only copy its value once)
   Object.defineProperty(self, 'phase', { get: () => phase });
+  Object.defineProperty(self, 'fallen', { get: () => !!fall || fallWant }); // blight: down (or about to go)
   Object.defineProperty(self, 'dest', { get: () => brain.goal }); // where it's heading (or null)
   return self;
+}
+
+// ---------- personal space ----------
+// The steering above keeps llamas apart most of the time, but up close (bunched together, herded,
+// greeting, or a wanderer caught in your way) they could end up overlapping — necks through
+// necks — or wedged against each other. So, after everyone has moved: each llama is a capsule along
+// its body (tail to neck, seen from above), and any two that overlap are eased apart. Yours has
+// right of way (it's never pushed by the living; it nudges them); the fallen don't move (the living,
+// yours included, are moved off them).
+const SPACE_BACK = 1.6, SPACE_FRONT = 2.4, SPACE_R = 1.1;  // the capsule: behind / ahead of centre, radius
+const SPACE_PUSH = 30;                                   // fastest it eases them apart (units a second)
+const _sa = [0, 0, 0, 0], _sb = [0, 0, 0, 0];
+function spaceSeg(l, o) {                                // the capsule's two end points, from above
+  const h = l.group.rotation.y, c = Math.cos(h), sn = Math.sin(h), p = l.group.position;
+  o[0] = p.x - c * SPACE_BACK; o[1] = p.z + sn * SPACE_BACK; o[2] = p.x + c * SPACE_FRONT; o[3] = p.z - sn * SPACE_FRONT;
+}
+// closest points between segments a and b (2D): returns the gap, with the direction b → a in _sd
+const _sd = [0, 0];
+function segGap(a, b) {
+  const dx = a[2] - a[0], dz = a[3] - a[1], ex = b[2] - b[0], ez = b[3] - b[1], rx = a[0] - b[0], rz = a[1] - b[1];
+  const A = dx * dx + dz * dz, E = ex * ex + ez * ez, F = ex * rx + ez * rz, C = dx * rx + dz * rz, B = dx * ex + dz * ez;
+  const den = A * E - B * B;
+  let s = den > 1e-6 ? clamp((B * F - C * E) / den, 0, 1) : 0, t = (B * s + F) / E;
+  if (t < 0) { t = 0; s = clamp(-C / A, 0, 1); } else if (t > 1) { t = 1; s = clamp((B - C) / A, 0, 1); }
+  const px = a[0] + dx * s - (b[0] + ex * t), pz = a[1] + dz * s - (b[1] + ez * t), d = Math.hypot(px, pz);
+  if (d > 1e-4) { _sd[0] = px / d; _sd[1] = pz / d; } else { _sd[0] = 1; _sd[1] = 0; }
+  return d;
+}
+function personalSpace(dt) {
+  if (FIXED_SPEED !== null) return;
+  const max = SPACE_PUSH * dt;
+  for (let i = 0; i < llamas.length; i++) for (let j = i + 1; j < llamas.length; j++) {
+    const a = llamas[i], b = llamas[j];
+    if (a.gone || b.gone) continue;                      // void: falling in
+    const pa = a.group.position, pb = b.group.position;
+    if (Math.abs(pa.x - pb.x) > 9 || Math.abs(pa.z - pb.z) > 9) continue;
+    spaceSeg(a, _sa); spaceSeg(b, _sb);
+    const gap = segGap(_sa, _sb), over = 2 * SPACE_R - gap;
+    if (over <= 0) continue;
+    if (gap < 0.3) {                                     // crossing: part them along the line between their centres
+      const dx = pa.x - pb.x, dz = pa.z - pb.z, d = Math.hypot(dx, dz) || 1;
+      _sd[0] = dx / d; _sd[1] = dz / d;
+    }
+    // how much each gives way: the fallen and (against the living) yours don't
+    const wa = a.fallen ? 0 : a === player ? (b.fallen ? 1 : 0) : 1;
+    const wb = b.fallen ? 0 : b === player ? (a.fallen ? 1 : 0) : 1;
+    if (wa + wb === 0) continue;
+    const m = Math.min(over, max) / (wa + wb);
+    pa.x += _sd[0] * m * wa; pa.z += _sd[1] * m * wa;
+    pb.x -= _sd[0] * m * wb; pb.z -= _sd[1] * m * wb;
+  }
 }
 
 // ---------- the herd ----------
@@ -1887,8 +2454,38 @@ bgIn.addEventListener('input', () => { renderer.setClearColor(bgIn.value); docum
 // mouse wheel / trackpad pinch zooms too
 renderer.domElement.addEventListener('wheel', (e) => {
   e.preventDefault();
-  setZoom(+zoomIn.value * Math.exp(-e.deltaY * 0.0015));
+  // a trackpad's two-finger swipe sideways orbits; up and down (or a pinch) zooms
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) setOrbit(camOrbit + e.deltaX * ORBIT_SWIPE);
+  else setZoom(+zoomIn.value * Math.exp(-e.deltaY * 0.0015));
 }, { passive: false });
+// right-drag turns the camera too — sideways orbits, up and down tilts (right-click isn't used for
+// anything else, so it can't clash with dropping balls, herding or petting). While dragging, your
+// llama ignores the cursor.
+const ORBIT_DRAG = 0.3, ORBIT_SWIPE = 0.12;   // degrees per pixel dragged / per unit swiped
+function setOrbit(deg) {
+  camOrbit = ((deg + 180) % 360 + 360) % 360 - 180;
+  orbitIn.value = camOrbit;
+  placeCamera();
+}
+function setTilt(deg) {                       // (kept within the panel slider's range)
+  camTilt = clamp(deg, +tiltIn.min, +tiltIn.max);
+  tiltIn.value = camTilt;
+  placeCamera();
+}
+renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button !== 2) return;
+  orbitDrag = { x: e.clientX, y: e.clientY };
+  homing = null;                               // (intro: your hand takes over from the glide home)
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+addEventListener('pointermove', (e) => {
+  if (!orbitDrag) return;
+  setOrbit(camOrbit - (e.clientX - orbitDrag.x) * ORBIT_DRAG);
+  setTilt(camTilt + (e.clientY - orbitDrag.y) * ORBIT_DRAG);   // drag down: look down from higher up
+  orbitDrag.x = e.clientX; orbitDrag.y = e.clientY;
+});
+addEventListener('pointerup', (e) => { if (e.button === 2) orbitDrag = null; });
 
 toggle.addEventListener('click', () => { panel.classList.add('open'); toggle.style.display = 'none'; });
 $('#panel .close').addEventListener('click', () => { panel.classList.remove('open'); toggle.style.display = ''; });
@@ -1995,7 +2592,7 @@ if (PAINT) {
   prints.renderOrder = -1;
   prints.count = 0;
   scene.add(prints);
-  paint = { blobs: blobs.map(([x, z, r]) => [c.x + x, c.z + z, r]), color, prints, list: [] };
+  paint = { blobs: blobs.map(([x, z, r]) => [c.x + x, c.z + z, r]), color, prints, list: [], blob }; // (void: blob sinks)
 }
 const inPaint = (x, z) => paint.blobs.some(([bx, bz, r]) => Math.hypot(x - bx, z - bz) < r);
 // a foot has landed at body-space (fx, hz): dip it, or leave a print if it's carrying paint
@@ -2003,6 +2600,11 @@ function paintStep(l, pos, heading, fx, hz) {
   if (!paint || pos.y > 0.05) return;                 // not on the ramp
   const c = Math.cos(heading), s = Math.sin(heading);
   const x = pos.x + fx * c + hz * s, z = pos.z - fx * s + hz * c;
+  if (l === player && blight >= BLIGHT_PRINTS && !vd.on) {  // blight: yours leaves black prints (until the void opens)
+    paint.list.push({ x, z, heading, k: 1, t: 0, col: _blackPrint, life: BLIGHT_PRINT_LIFE });
+    if (paint.list.length > PRINT_CAP) paint.list.shift();
+    return;
+  }
   if (inPaint(x, z)) { l.paint = PRINT_STEPS; return; }
   if (!(l.paint > 0)) return;
   paint.list.push({ x, z, heading, k: l.paint / PRINT_STEPS, t: 0 });
@@ -2027,14 +2629,14 @@ const _pY = new THREE.Vector3(0, 1, 0), _pc = new THREE.Color(), _bgc = new THRE
 function updatePaint(dt) {
   if (!paint) return;
   const list = paint.list, mesh = paint.prints;
-  while (list.length && list[0].t > PRINT_LIFE) list.shift();
+  while (list.length && list[0].t > (list[0].life ?? PRINT_LIFE)) list.shift();
   renderer.getClearColor(_bgc);
   list.forEach((pr, i) => {
     pr.t += dt;
-    const fade = smooth(0.3, 1, pr.t / PRINT_LIFE), size = (0.6 + 0.4 * pr.k) * (1 - 0.4 * fade);
+    const fade = smooth(0.3, 1, pr.t / (pr.life ?? PRINT_LIFE)), size = (0.6 + 0.4 * pr.k) * (1 - 0.4 * fade);
     _pm.compose(_pp.set(pr.x, 0.015, pr.z), _pq.setFromAxisAngle(_pY, pr.heading), _ps.set((pr.sx ?? 1.2) * size, 1, (pr.sz ?? 0.85) * size));
     mesh.setMatrixAt(i, _pm);
-    mesh.setColorAt(i, _pc.copy(paint.color).lerp(_bgc, fade));
+    mesh.setColorAt(i, _pc.copy(pr.col ?? paint.color).lerp(_bgc, fade));
   });
   mesh.count = list.length;
   mesh.instanceMatrix.needsUpdate = true;
@@ -2145,7 +2747,7 @@ function pileKnock(piece, e) {
   piles.heard = now;
   sfx.knock(piece.mesh.position, piece.kind, Math.min(1, hit / 18));
 }
-const _pv = new CANNON.Vec3();
+const _pv = new CANNON.Vec3(), _pw = new THREE.Vector3(), _pwq = new THREE.Quaternion();
 // each llama (and each flying ball) is a solid that moves with it, so it shoves pieces as it goes
 function llamaBody(l) {
   let b = piles.llamaBodies.get(l);
@@ -2162,14 +2764,20 @@ function updatePiles(dt) {
   if (!piles || dt <= 0) return;
   for (const [l, b] of piles.llamaBodies) if (!llamas.includes(l)) { piles.world.removeBody(b); piles.llamaBodies.delete(l); }
   for (const l of llamas) {
-    const b = llamaBody(l), p = l.group.position;
+    if (l.gone) {                                                   // void: swallowed — no longer solid
+      const b = piles.llamaBodies.get(l);
+      if (b) { piles.world.removeBody(b); piles.llamaBodies.delete(l); }
+      continue;
+    }
+    const b = llamaBody(l), p = l.tip.getWorldPosition(_pw);       // (blight: a fallen one lies on its side)
     _pv.set(p.x, p.y, p.z);
     b.velocity.set((_pv.x - b.position.x) / dt, (_pv.y - b.position.y) / dt, (_pv.z - b.position.z) / dt);
     const sp = b.velocity.length();
     if (sp > 60) b.velocity.set(0, 0, 0);                                            // (a teleport, not a shove)
     else if (sp > PILE_SHOVE) b.velocity.scale(PILE_SHOVE / sp, b.velocity);        // gentle, even at a gallop
     b.position.copy(_pv);
-    b.quaternion.setFromEuler(0, l.group.rotation.y, 0);
+    _pwq.setFromEuler(l.group.rotation).multiply(l.tip.quaternion); // (not from the world matrix: a shrinking llama's scale would spoil it)
+    b.quaternion.set(_pwq.x, _pwq.y, _pwq.z, _pwq.w);
   }
   for (const [ball, b] of piles.ballBodies) if (!loose.includes(ball)) { piles.world.removeBody(b); piles.ballBodies.delete(ball); }
   for (const ball of loose) {
@@ -2299,7 +2907,7 @@ function updateGrass(dt) {
   let i = 0;
   const put = (x, y, z) => { a[i++] = x; a[i++] = y; a[i++] = z; };
   for (const t of grass.tufts) {
-    const at = (u, v) => put(t.x + _gR.x * u, v, t.z + _gR.z * u);  // tuft plane → world
+    const at = (u, v) => put(t.x + _gR.x * u, v + (t.y ?? 0), t.z + _gR.z * u);  // tuft plane → world (void: t.y, falling in)
     for (const b of t.blades) {
       for (let k = 0; k < BLADE_SEG; k++) {                // a ribbon, tapering toward the tip
         const q0 = k / BLADE_SEG, q1 = (k + 1) / BLADE_SEG;
@@ -2310,8 +2918,9 @@ function updateGrass(dt) {
         at(u0 + nu * ra, v0 + nv * ra); at(u1 - nu * rb, v1 - nv * rb); at(u0 - nu * ra, v0 - nv * ra);
       }
       if (b.flower) {                                      // a square dot, square to the screen
-        const u = bladeU(t, b, 1), cx = t.x + _gR.x * u, cy = b.h * t.s, cz = t.z + _gR.z * u;
-        const sq = (m, n) => put(cx + (_gR.x * m + _gU.x * n) * f, cy + _gU.y * n * f, cz + (_gR.z * m + _gU.z * n) * f);
+        const u = bladeU(t, b, 1), cx = t.x + _gR.x * u, cy = b.h * t.s + (t.y ?? 0), cz = t.z + _gR.z * u;
+        const ff = t.gone ? f * Math.min(1, t.s / 0.8) : f;  // (void: shrinks as its tuft sinks)
+        const sq = (m, n) => put(cx + (_gR.x * m + _gU.x * n) * ff, cy + _gU.y * n * ff, cz + (_gR.z * m + _gU.z * n) * ff);
         sq(-1, -1); sq(1, -1); sq(1, 1); sq(-1, -1); sq(1, 1); sq(-1, 1);
       }
     }
@@ -2331,9 +2940,11 @@ const RAIN = FIXED_SPEED === null;
 const RAIN_EVERY = [60, 120];    // seconds between showers (on screen: the clock pauses when the page is hidden)
 const RAIN_LEN = [20, 32];       // how long one lasts (easing in and out)
 const RAIN_DROPS = 280;          // streaks at the heaviest
+const THUNDER_VOL = 0.5;         // ramp: thunder after a summit's lightning
 const RAIN_TINT = 0.16;          // how much the light dims at the heaviest (0 = not at all)
 const RIPPLE_CAP = 140, RIPPLE_LIFE = 0.75;
 const DROPLET_COL = new THREE.Color(0x9fb3c8);
+const BLIGHT_RAIN = 0.75;        // blight: past this much of the herd gone, it rains for good
 let rainOn = RAIN, rainWait = 40 + Math.random() * 40, rainT = -1, rainLen = 0, rainK = 0; // rainK: 0 dry … 1 heaviest
 let rain = null;
 const rainTint = document.getElementById('rain-tint');
@@ -2370,22 +2981,24 @@ function dropSpawn(d, high) {
 }
 const _rm = new THREE.Matrix4(), _rc = new THREE.Color(), _rbg = new THREE.Color(), _rink = new THREE.Color(0x7d8ea4);
 function startRain() {
-  rainT = 0; rainLen = RAIN_LEN[0] + Math.random() * (RAIN_LEN[1] - RAIN_LEN[0]);
+  rainT = 0; rainLen = (RAIN_LEN[0] + Math.random() * (RAIN_LEN[1] - RAIN_LEN[0])) * (1 + 2 * blight); // blight: longer showers
   for (const d of rain.drops) dropSpawn(d, true);
 }
 function endRain() {
   rainT = -1; rainK = 0;
-  rainWait = RAIN_EVERY[0] + Math.random() * (RAIN_EVERY[1] - RAIN_EVERY[0]);
+  rainWait = (RAIN_EVERY[0] + Math.random() * (RAIN_EVERY[1] - RAIN_EVERY[0])) * (1 - 0.85 * blight); // blight: more often
   for (const l of llamas) l.shakeOff(0.3 + Math.random() * 2.2);  // each in its own time
 }
 function updateRain(dt) {
   if (!rain) return;
-  if (rainT < 0) { if (rainOn && (rainWait -= dt) <= 0) startRain(); }
+  if (rainT < 0) { if (rainOn && !voidDrying() && ((rainWait -= dt) <= 0 || blight > BLIGHT_RAIN)) startRain(); } // (blight: near the end, straight away)
   else {
     rainT += dt;
+    if (blight > BLIGHT_RAIN && rainOn && rainLen < INTRO_SHOWER && !voidDrying()) rainLen = Math.max(rainLen, rainT + 7); // blight: near the end, it doesn't stop
+    if (voidDrying() && rainLen > rainT + 6.01) rainLen = rainT + 6;          // void: ...until the very end, when it eases off
     rainK = smooth(0, 5, rainT) * (1 - smooth(rainLen - 6, rainLen, rainT));
-    if (rainT > rainLen || (!rainOn && rainK < 0.02)) endRain();
-    if (!rainOn) rainLen = Math.min(rainLen, rainT + 3);  // switched off mid-shower: wind it down
+    if (rainT > rainLen || (!rainOn && !introOn && rainK < 0.02)) endRain();   // (intro: its shower falls regardless)
+    if (!rainOn && !introOn) rainLen = Math.min(rainLen, rainT + 3);  // switched off mid-shower: wind it down
   }
   rainTint.style.opacity = rainK * RAIN_TINT;
   // the streaks
@@ -2429,6 +3042,43 @@ else {
     try { localStorage.setItem('llama-rain', rainOn ? 'on' : 'off'); } catch {}
     if (rainOn && rainT < 0) rainWait = 3;                      // switched on: one along shortly
   });
+}
+// ramp: reaching the top (glitch mode) brings a shower along — or, if one's already falling, a
+// flash of lightning (just the light: a quick double flicker, no bolt) and a roll of thunder
+const flashEl = document.getElementById('flash');
+function summitStorm() {
+  if (!rain || !rainOn) return;
+  if (rainT < 0) { startRain(); return; }
+  flashEl.animate([{ opacity: 0 }, { opacity: 0.6, offset: 0.03 }, { opacity: 0.1, offset: 0.12 }, { opacity: 0.45, offset: 0.2 }, { opacity: 0 }],
+    { duration: 900, easing: 'ease-out' });
+  thunder(0.5 + Math.random() * 0.4);
+}
+// sfx: thunder, a little after the flash — a soft crack, then a low rumble that rolls and fades
+function thunder(delay) {
+  if (!actx || actx.state !== 'running' || !sfxOn) return;
+  const t = actx.currentTime + delay, out = actx.createGain();
+  out.gain.value = THUNDER_VOL;
+  out.connect(sfxOut);
+  for (const [freq, gain, attack, decay] of [[700, 0.25, 0.01, 0.5], [160, 1.6, 0.15, 3.5]]) { // crack, rumble
+    const src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+    src.buffer = sfxNoise; src.loop = true;
+    f.type = 'lowpass'; f.frequency.setValueAtTime(freq, t); f.frequency.exponentialRampToValueAtTime(freq * 0.5, t + attack + decay);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(gain, t + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
+    src.connect(f).connect(g).connect(out);
+    src.start(t, Math.random() * 0.5); src.stop(t + attack + decay + 0.1);
+  }
+  const roll = actx.createOscillator(), depth = actx.createGain();   // the roll: a slow wobble in level
+  roll.frequency.value = 2.3; depth.gain.value = 0.35;
+  roll.connect(depth).connect(out.gain);
+  roll.start(t); roll.stop(t + 4);
+}
+// intro: a shower already falling behind the title, which clears soon after your llama drops in
+if (rain && INTRO && INTRO_RAIN) {
+  startRain();
+  rainT = 5; rainK = 1; rainLen = INTRO_SHOWER;              // at full strength (until the snap sets its end)
+  for (const d of rain.drops) d.y = Math.random() * 40;  // already falling all the way down
 }
 // sfx: a soft hush (filtered noise, swelling with the shower) and the odd quiet drip
 function rainSound(dt) {
@@ -2482,14 +3132,40 @@ if (BUTTERFLIES) {
     scene.add(g);
     flies.push({ g, l, r, v: new THREE.Vector3(), t: Math.random() * 10, state: 'fly', target: new THREE.Vector3(), spot: null, rest: 0, wait: 0 });
   }
+  if (INTRO && !INTRO_CUTE) introFly();
   flies.forEach(pickFlight);
+}
+// intro: the butter-yellow one flutters over the title card too. It's drawn a second time, alone,
+// on a see-through canvas above the card (same camera, same frame), until the snap. (void: again
+// when the title card comes back — it's the last thing left alive)
+function introFly() {
+  const fl = flies[0], over = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+  over.setPixelRatio(renderer.getPixelRatio());
+  over.setClearColor(0x000000, 0);
+  over.domElement.id = 'intro-fly';
+  document.body.append(over.domElement);
+  fl.g.traverse((o) => o.layers.enable(1));           // layer 1: what the extra canvas draws
+  fl.intro = true;
+  introLayer = {
+    draw() {
+      const c = renderer.domElement;
+      if (over.domElement.width !== c.width || over.domElement.height !== c.height) over.setSize(innerWidth, innerHeight);
+      camera.layers.set(1); over.render(scene, camera); camera.layers.set(0);
+    },
+    end() {
+      over.domElement.remove(); over.dispose();
+      fl.g.traverse((o) => o.layers.disable(1));
+      fl.intro = false;
+    },
+  };
 }
 const _fb = new THREE.Vector3(), _fd = new THREE.Vector3();
 // somewhere to go: usually a flower to settle on, sometimes a resting llama, sometimes just a wander
 function pickFlight(fl) {
-  const flowers = grass ? grass.tufts.flatMap((t) => t.blades.filter((b) => b.flower).map((b) => ({ t, b }))) : [];
-  const resting = llamas.filter((l) => l.group.position.distanceToSquared(l.lastPos ?? l.group.position) < 1e-6 && !l.petting);
-  const r = rainK > 0.15 ? 0 : Math.random();            // rain: head for a flower to wait it out
+  const flowers = grass ? grass.tufts.filter((t) => !t.gone).flatMap((t) => t.blades.filter((b) => b.flower).map((b) => ({ t, b }))) : []; // (void: not ones going under)
+  const resting = llamas.filter((l) => l.group.position.distanceToSquared(l.lastPos ?? l.group.position) < 1e-6 && !l.petting && !l.gone);
+  const r = (fl.intro && introOn) || voidOpen ? 1          // intro: keeps fluttering about over the title (void: nowhere to land)
+    : rainK > 0.15 ? 0 : Math.random();                  // rain: head for a flower to wait it out
   fl.spot = null;
   if (r < 0.45 && flowers.length) fl.spot = { flower: pick(flowers) };
   else if (r < 0.7 && resting.length) fl.spot = { llama: pick(resting) };
@@ -2506,10 +3182,19 @@ function updateButterflies(dt) {
   for (const fl of flies) {
     fl.t += dt;
     const g = fl.g;
+    if (fl.state === 'gone') continue;
+    // void: any but the yellow one, crossing over the pit, is pulled down into it, wings slowing
+    if (vd.on && fl !== flies[0] && fl.state !== 'fall' && Math.hypot(g.position.x - vd.x, g.position.z - vd.z) < vd.r * 0.9) { fl.state = 'fall'; fl.v.set(0, 0, 0); }
+    if (fl.state === 'fall') {
+      fl.v.y -= 9 * dt; g.position.addScaledVector(fl.v, dt);
+      const a = 0.15 + 1.0 * (0.5 + 0.5 * Math.sin(fl.t * 5)); fl.l.rotation.x = -a; fl.r.rotation.x = a;
+      if (g.position.y < -60) { fl.state = 'gone'; g.visible = false; }
+      continue;
+    }
     if (fl.state === 'rest') {
       spotPos(fl.spot, g.position);
       const l = fl.spot.llama, moved = l && (l.group.position.distanceToSquared(l.lastPos) > 1e-4 || l.petting);
-      if (((fl.rest -= dt) < 0 && rainK < 0.15) || moved) { pickFlight(fl); fl.v.set(0, 2, 0); } // (rain: stays put)
+      if (((fl.rest -= dt) < 0 && rainK < 0.15) || moved || fl.spot.flower?.t.gone || l?.gone) { pickFlight(fl); fl.v.set(0, 2, 0); } // (rain: stays put; void: its perch is going under)
       // resting: wings mostly closed overhead, slowly fanning
       const a = 1.25 - 0.25 * (0.5 + 0.5 * Math.sin(fl.t * 2.5));
       fl.l.rotation.x = -a; fl.r.rotation.x = a;
@@ -2629,17 +3314,10 @@ function releaseLine() {
   line.length = 0;
 }
 function herd(l) {
-  if (line.includes(l)) {                           // already in line: let it go
-    line.splice(line.indexOf(l), 1);
-    l.followTarget = null; l.followLeader = null;
-    l.poke(true);
-    sfx.herdLeave(l.group.position);                // sfx:
-  } else {
-    line.push(l);
-    l.poke(true);                                   // a happy hop (or waking from a nap)
-    sfx.herdJoin(l.group.position, line.length);    // sfx:
-    heart(atLlama(l));
-  }
+  line.push(l);
+  l.poke(true);                                     // a happy hop (or waking from a nap)
+  sfx.herdJoin(l.group.position, line.length);      // sfx:
+  heart(atLlama(l));
   renderBubble();
 }
 function gatherStep(dt) {
@@ -2660,14 +3338,14 @@ function gatherStep(dt) {
   hintPause = Math.max(0, hintPause - dt);
   const pressing = press && !press.claimed ? press.llama : null;
   const focus = pressing ?? (!press && hintPause <= 0 ? pointerOn : null); // let the pop play before hinting again
-  const canHerd = focus && focus !== player && party < 0 && cooldown <= 0 && llamas.includes(focus) &&
+  const canHerd = focus && focus !== player && !line.includes(focus) && !focus.fallen /* blight: */ && party < 0 && cooldown <= 0 && llamas.includes(focus) &&
     focus.group.position.distanceTo(player.group.position) < HERD_RANGE;
   if (canHerd) {
     const holding = pressing === focus && press.t > HOLD_DELAY;
     const k = holding ? clamp((press.t - HOLD_DELAY) / HOLD_TIME, 0, 1) : 0;
     const [bx, by] = aboveHead(focus, 2.6);
     tipEl.style.translate = `calc(${bx}px - 50%) calc(${by}px - 100%)`;
-    tipText.innerHTML = `<i>${focus.name}</i> · ` + (line.includes(focus) ? 'hold to let go' : 'hold to <b>♥</b>');
+    tipText.innerHTML = `<i>${focus.name}</i> · hold to <b>♥</b>`;
     tipBar.style.background = hexOf(focus);
     tipBar.style.width = k * 100 + '%';
     tipEl.classList.remove('done');                 // a finished pop would otherwise keep it hidden
@@ -2722,10 +3400,11 @@ function gatherStep(dt) {
     }
   });
   // everyone's here: party
-  if (others.length > 0 && line.length === others.length) {
+  const living = others.filter((l) => !l.fallen).length;      // blight: the fallen can't come
+  if (living > 0 && line.length === living) {
     party = 0;
     renderBubble(true);
-    for (const l of llamas) { l.celebrate(); heart(atLlama(l)); }
+    for (const l of llamas) if (!l.fallen) { l.celebrate(); heart(atLlama(l)); } // (blight: not the dead)
     sfx.party(player.group.position);               // sfx:
   }
 }
@@ -2740,7 +3419,7 @@ if (GATHER) {
 }
 
 function step(dt) {
-  if (FIXED_SPEED === null) pointerIdle += dt;
+  if (FIXED_SPEED === null) pointerIdle = introOn ? 0 : pointerIdle + dt; // intro: no napping before it appears
   updateBalls(dt);
   updateRamp(dt);
   updatePaint(dt);
@@ -2751,8 +3430,367 @@ function step(dt) {
   updatePokeTip(dt);                // sfx:
   updateMusic(dt);                  // music:
   gatherStep(dt);
+  if (introOn && !introGo && INTRO_SPIN) setOrbit(camOrbit + INTRO_SPIN * dt); // intro: the slow turn while it waits...
+  if (homing) {                                                                  // ...and the glide home after Play
+    homing.t = Math.min(1, homing.t + dt / ORBIT_HOME_TIME);
+    setOrbit(homing.from + homing.by * smoother(homing.t));
+    if (homing.t >= 1) homing = null;
+  }
+  blightStep(dt);                   // blight:
+  voidStep(dt);                     // void:
+  updateCarrion(dt);                // carrion:
   for (const l of llamas) l.update(dt);
+  personalSpace(dt);
   updatePiles(dt);                  // piles:
+}
+
+// ---------- blight (the infection) ----------
+// Your llama doesn't belong here, and just by being here it makes the others sick. Each wanderer
+// slowly catches it on its own (so in the end it's inevitable), and much faster near yours:
+// beside it, herded in its line, and fastest of all while you pet it. Sick, a llama's coat drains
+// toward grey, it slows and gets unsteady, its head hangs and it stops greeting the others; then
+// it sways, and keels over onto its side, X X. `blight` (0..1) is how far it's spread through the
+// herd — later stages (music, rain, the void) read it. "Blight" in the panel switches it off (the
+// herd recovers and gets back up). Only counts on-screen time, and not during the intro.
+// Testing: ?blight=0.6 starts it that far along; ?blightspeed=20 runs it 20× faster.
+// To turn off: BLIGHT_ON = false. To remove: delete this section, #blight-row in index.html, and
+// the small hooks marked "blight:".
+const BLIGHT = BLIGHT_ON && FIXED_SPEED === null;
+const BLIGHT_MIN = 7;          // ← minutes until even a llama yours never goes near has fallen
+const BLIGHT_EARLY = 0.35;     // ...the first of those fall after this fraction of that (they're staggered)
+const BLIGHT_NEAR = 8;         // within this of yours (centre to centre) a llama is catching it...
+const BLIGHT_CATCH = 80;       // ← ...and would fall after this many seconds of it (being petted: 4× faster)
+const BLIGHT_RECOVER = 15;     // switched off: seconds for a sick llama to get well again
+const BLIGHT_SPEED = parseFloat(params.get('blightspeed') || '1');
+const BLIGHT_GLITCH = 0.35;    // past this (and with a couple fallen), your llama glitches now and then
+const BLIGHT_PRINTS = 0.5;     // past this, it leaves black footprints (until the void opens)
+const BLIGHT_PRINT_LIFE = 7;   // seconds each black print lasts
+const _blackPrint = new THREE.Color(0x111111);
+const burst = { wait: 3, t: 0, k: 0, own: false }; // your llama's glitch bursts
+let blightOn = BLIGHT;
+try { if (localStorage.getItem('llama-blight') === 'off') blightOn = false; } catch {}
+const wanderers = () => llamas.filter((l) => l !== player);
+// each llama's own pace: some succumb early, some hold out to the end
+const ownRate = (l) => (l.blightRate ??= 1 / (BLIGHT_MIN * 60 * lerp(BLIGHT_EARLY, 1, Math.random())));
+function blightStep(dt) {
+  if (!BLIGHT || introOn) return;
+  const me = player.group.position, k = dt * BLIGHT_SPEED;
+  let total = 0;
+  const herd = wanderers();
+  for (const l of herd) {
+    l.sick ??= 0;
+    if (blightOn) {
+      if (!l.fallen) {
+        const near = l.followLeader || l.group.position.distanceTo(me) < BLIGHT_NEAR;
+        l.sick = Math.min(1, l.sick + k * (ownRate(l) + (near ? (l.petting ? 4 : 1) / BLIGHT_CATCH : 0)));
+        if (l.sick >= 1) {
+          l.keel();
+          const i = line.indexOf(l);                 // gather: a fallen one leaves the line
+          if (i >= 0) { line.splice(i, 1); l.followTarget = null; l.followLeader = null; renderBubble(); }
+        }
+      }
+    } else {
+      if (l.fallen) l.rise();
+      l.sick = Math.max(0, l.sick - k / BLIGHT_RECOVER);
+    }
+    total += l.fallen ? 1 : l.sick;
+  }
+  blight = herd.length ? total / herd.length : 0;
+  // your llama glitches: short bursts, more often as it spreads (with the summit's broken hum, no boom)
+  const down = herd.filter((l) => l.fallen).length;
+  if (blightOn && blight > BLIGHT_GLITCH && down >= 2 && burst.t <= 0 && (burst.wait -= dt) <= 0) {
+    burst.t = 0.25 + Math.random() * 0.7; burst.k = 0.5 + Math.random() * 0.5;
+    burst.wait = lerp(14, 4, blight) * (0.6 + Math.random() * 0.8);
+    if (!glitch.snd) { glitch.snd = glitchSound(player.group.position, false); burst.own = !!glitch.snd; }
+  }
+  if (burst.t > 0 && (burst.t -= dt) <= 0 && burst.own) { glitchSoundEnd(glitch.snd); glitch.snd = null; burst.own = false; }
+  blightGlitch = burst.t > 0 ? burst.k : 0;
+  if (blightPct) blightPct.textContent = Math.round(blight * 100) + '%';
+}
+// the panel: on/off and how far it's spread
+const blightIn = document.getElementById('blight'), blightPct = document.getElementById('blight-pct');
+if (!BLIGHT) document.getElementById('blight-row').remove();
+else {
+  blightIn.checked = blightOn;
+  blightIn.addEventListener('change', () => {
+    blightOn = blightIn.checked;
+    try { localStorage.setItem('llama-blight', blightOn ? 'on' : 'off'); } catch {}
+  });
+  // testing: ?blight=0.6 — that much of the herd already sick or fallen (the earliest to go first)
+  if (params.has('blight')) {
+    const herd = wanderers().sort((a, b) => ownRate(b) - ownRate(a));
+    let left = clamp(parseFloat(params.get('blight')), 0, 1) * herd.length;
+    for (const l of herd) {
+      l.sick = clamp(left, 0, 1); left -= 1;
+      if (l.sick >= 1) l.keel(true);
+    }
+  }
+}
+
+// ---------- flies over the fallen (detail) ----------
+// A little while after a llama has died, a few tiny flies — single dark pixels — buzz about over
+// it, in quick jittery loops. One points draw call for all of them.
+// To remove: set CARRION = false (or delete this section and its hook in step).
+const CARRION = BLIGHT;
+const CARRION_N = 3;           // flies per fallen llama
+const CARRION_AFTER = 3;       // seconds after it falls before they find it
+let carrion = null;
+if (CARRION) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_LLAMAS * CARRION_N * 3), 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setDrawRange(0, 0);
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x2a2a2a, size: 2 * renderer.getPixelRatio(), sizeAttenuation: false }));
+  pts.frustumCulled = false;
+  scene.add(pts);
+  carrion = { pts, t: 0 };
+}
+function updateCarrion(dt) {
+  if (!carrion) return;
+  const t = (carrion.t += dt), a = carrion.pts.geometry.attributes.position.array;
+  let n = 0;
+  for (const l of llamas) {
+    if (l === player || l.gone || !l.fallen) { l.deadT = 0; continue; }
+    if ((l.deadT = (l.deadT ?? 0) + dt) < CARRION_AFTER) continue;
+    const p = l.group.position, seed = l.id.length * 7.3 + (l.name?.length ?? 0);
+    for (let k = 0; k < CARRION_N && (l.deadT - CARRION_AFTER) > k * 1.5; k++, n++) { // they arrive one by one
+      const ph = seed + k * 2.1;
+      a[n * 3] = p.x + Math.sin(t * 2.3 + ph) * 1.6 + Math.sin(t * 7.1 + ph * 3) * 0.35;
+      a[n * 3 + 1] = 1.6 + Math.abs(Math.sin(t * 1.7 + ph)) * 1.4 + Math.sin(t * 9.3 + ph) * 0.2;
+      a[n * 3 + 2] = p.z + Math.cos(t * 2.9 + ph * 1.3) * 1.6 + Math.cos(t * 6.4 + ph * 2) * 0.35;
+    }
+  }
+  carrion.pts.geometry.setDrawRange(0, n);
+  carrion.pts.geometry.attributes.position.needsUpdate = true;
+}
+
+// ---------- the void (the end) ----------
+// Before the last of the herd has fallen, a pit opens under your llama (its legs go all black): a
+// hole in the ground with walls dropping away in flat bands of charcoal, darker the deeper they go
+// (never quite black, so your llama still stands out). It trails after your llama, growing all the
+// time and faster as you walk, its edge slowly breathing. Whatever its edge reaches tips over the
+// brink — slowly at first, then faster, as a weight would — and falls into the depths: the fallen
+// llamas, the grass, the toys, the paint, the balls, the ramp (any llama still standing there
+// collapses first). The blue butterfly is pulled down too; the yellow one is the last thing alive.
+// As it fills the view the pit darkens to black, the rain eases off, everything goes quiet — and
+// with a snap the title card is back (the yellow butterfly still fluttering over it) and the
+// world behind it is new again, waiting for Play.
+// How: an invisible copy of the ground (depth only) with the hole cut out hides whatever falls
+// below it; the walls are drawn under it, seen only through the hole.
+// Testing: VOID_NOW = true (or ?void=1) opens it straight away; ?blight=1 a few seconds in.
+// To turn off: VOID_ON = false. To remove: delete this section, #void-ui in style.css, and the
+// small hooks marked "void:".
+const VOID_ON = true;          // ← false: the world just stays fallen
+const VOID_NOW = false;        // ← temporary, for testing: true opens it as soon as the scene starts
+const VOID = VOID_ON && BLIGHT;
+const VOID_AT = 0.8;           // opens once the blight has spread this far (a few may still be standing)
+const VOID_WAIT = 4;           // ...after this many seconds
+const VOID_GROW = 0.35;        // world units a second it grows by itself (a little faster as it gets bigger)...
+const VOID_WALK = 0.25;        // ...plus this much for every unit your llama walks
+const VOID_FALL = 30;          // gravity, for things going over the edge
+const VOID_RUSH = 6;           // how much faster it grows over the last stretch (once it covers ~70% of the view)
+const VOID_DRY = 0.5;          // once it covers this much of the view, the rain eases off
+const VOID_DARK = [0.55, 0.98];// ...and over this much, the pit darkens to black (and the sound fades)
+const VOID_HOLD = 1.5;         // seconds of black before the snap
+// the walls: bands from the rim down (depth where each ends, colour)
+const VOID_BANDS = [[2, 0x48484e], [6, 0x36363b], [14, 0x29292d], [30, 0x1e1e21], [70, 0x151517], [400, 0x0c0c0d]];
+const _vp = new THREE.Vector3(), _vn = new THREE.Vector2(), _vq = new THREE.Quaternion();
+const vd = { on: false, wait: VOID_WAIT, r: 0, x: 0, z: 0, t: 0, falling: [], end: -1, lx: 0, lz: 0, cover: 0 };
+const voidDrying = () => vd.on && vd.cover > VOID_DRY;   // rain: no more showers, and the last one eases off
+if (VOID) {
+  const N = 120, R = N + 1;
+  vd.N = N;
+  // the ground with the hole in it: a ring from the rim out to far away, depth only
+  const ringGeo = new THREE.BufferGeometry(), ringIdx = [];
+  ringGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(R * 2 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+  for (let i = 0; i < N; i++) ringIdx.push(i, i + 1, R + i, i + 1, R + i + 1, R + i);
+  ringGeo.setIndex(ringIdx);
+  vd.ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide }));
+  vd.ring.renderOrder = -10;                         // first, so everything below ground outside the hole is hidden
+  // the walls: a band of rows per colour, straight down from the rim
+  const rows = VOID_BANDS.length * 2, wallGeo = new THREE.BufferGeometry(), col = new Float32Array(R * rows * 3), wallIdx = [];
+  const c = new THREE.Color();
+  vd.depths = [];
+  VOID_BANDS.forEach(([d, hex], k) => {
+    vd.depths.push(k ? VOID_BANDS[k - 1][0] : 0, d);
+    c.set(hex);
+    for (let j = 0; j < 2; j++) for (let i = 0; i < R; i++) col.set([c.r, c.g, c.b], ((2 * k + j) * R + i) * 3);
+    for (let i = 0; i < N; i++) { const a = 2 * k * R + i, b = a + R; wallIdx.push(a, a + 1, b, a + 1, b + 1, b); }
+  });
+  vd.cols = col.slice();                             // the bands' own colours (they darken toward the end)
+  wallGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(R * rows * 3), 3).setUsage(THREE.DynamicDrawUsage));
+  wallGeo.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+  wallGeo.setIndex(wallIdx);
+  vd.wall = new THREE.Mesh(wallGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+  vd.wall.renderOrder = -0.5;                        // after the ground's paint and prints (it covers them in the hole)
+  for (const m of [vd.ring, vd.wall]) { m.frustumCulled = false; m.visible = false; scene.add(m); }
+  // what the reset puts back: the toys, the grass, the paint, the ramp
+  if (piles) for (const p of (piles.all = piles.pieces.slice())) { p.homeQ = p.body.quaternion.clone(); }
+  if (grass) for (const t of grass.tufts) t.home = { x: t.x, z: t.z, s: t.s };
+  if (ramp) ramp.home = ramp.group.quaternion.clone();
+}
+// the rim's radius at angle th: a circle, slowly breathing
+const voidRim = (th) => vd.r * (1 + 0.035 * Math.sin(5 * th + vd.t * 0.7) + 0.02 * Math.sin(9 * th - vd.t * 1.1));
+// everything it can take that isn't already going: where it is, how big, and how to place it as it
+// goes (y: drop, q: its tilt over the edge, applied on top of how it already sits)
+let voidRamp = null;           // the ramp while it's gone (the reset brings it back)
+function voidCandidates() {
+  const out = [];
+  for (const l of llamas) if (l !== player && l.fallen && !l.gone) {
+    const g = l.group, base = g.quaternion.clone(), y0 = g.position.y;
+    out.push({ x: g.position.x, z: g.position.z, size: 3, mark: () => (l.gone = true),
+      set(x, y, z, q) { g.position.set(x, y0 + y, z); g.quaternion.copy(q).multiply(base); } });
+  }
+  for (const b of balls) if (!b.gone && !b.claimedBy) {
+    out.push({ x: b.pos.x, z: b.pos.z, size: 0.4, mark: () => { b.gone = true; removeBall(b); }, done: () => disposeBall(b),
+      set(x, y, z, q) { b.g.position.set(x, y, z); b.g.quaternion.copy(q); } });
+  }
+  if (piles) for (const p of piles.pieces) {
+    const m = p.mesh, base = m.quaternion.clone(), y0 = m.position.y;
+    out.push({ x: m.position.x, z: m.position.z, size: 0.8,
+      mark: () => { piles.pieces.splice(piles.pieces.indexOf(p), 1); piles.world.removeBody(p.body); }, done: () => scene.remove(m),
+      set(x, y, z, q) { m.position.set(x, y0 + y, z); m.quaternion.copy(q).multiply(base); } });
+  }
+  if (grass) for (const t of grass.tufts) if (!t.gone) {
+    out.push({ x: t.x, z: t.z, size: 0.6, flat: true, mark: () => (t.gone = true), set(x, y, z) { t.x = x; t.z = z; t.y = y; } });
+  }
+  if (paint && !paint.gone) {
+    const m = paint.blob;
+    out.push({ x: m.position.x, z: m.position.z, size: 4, flat: true, mark: () => (paint.gone = true), done: () => (m.visible = false),
+      set(x, y, z) { m.position.set(x, 0.01 + y, z); } });
+  }
+  if (ramp && !ramp.gone && !onRamp(player.group.position.x, player.group.position.z, 1)) {
+    const g = ramp.group, base = g.quaternion.clone(), r = ramp;
+    out.push({ x: ramp.x, z: ramp.z, size: RAMP_LEN / 2, mark: () => (r.gone = true), done: () => { scene.remove(g); voidRamp = r; ramp = null; },
+      set(x, y, z, q) { g.position.set(x, y, z); g.quaternion.copy(q).multiply(base); } });
+  }
+  return out;
+}
+function voidStep(dt) {
+  if (!VOID || introOn) return;
+  const me = player.group.position;
+  if (!vd.on) {
+    const now = VOID_NOW || params.has('void');
+    if (!now && (!blightOn || blight < VOID_AT)) { vd.wait = VOID_WAIT; return; }
+    if ((vd.wait -= dt) > 0) return;
+    vd.on = voidOpen = true; vd.x = me.x; vd.z = me.z; vd.lx = me.x; vd.lz = me.z; vd.r = 1.5; vd.t = 0;
+    vd.ring.visible = vd.wall.visible = true;
+    player.setFar(0x000000);                             // its legs go all black
+    blightIn.disabled = true;                            // blight: no taking it back now
+  }
+  vd.t += dt;
+  // it grows (more as you walk), and trails after your llama
+  const walked = Math.hypot(me.x - vd.lx, me.z - vd.lz);
+  vd.lx = me.x; vd.lz = me.z;
+  if (vd.end < 0) vd.r += ((VOID_GROW + 0.02 * vd.r) * dt + VOID_WALK * walked) * (1 + VOID_RUSH * smooth(0.7, 1, vd.cover)); // (and quickly at the end: no lingering corners)
+  vd.x = damp(vd.x, me.x, 0.6, dt); vd.z = damp(vd.z, me.z, 0.6, dt);
+  // reshape the hole and its walls to the rim; near the end, the walls darken to black
+  const R = vd.N + 1, ring = vd.ring.geometry.attributes.position, wall = vd.wall.geometry.attributes.position;
+  for (let i = 0; i < R; i++) {
+    const th = (i / vd.N) * Math.PI * 2, r = voidRim(th), cx = Math.cos(th), sz = Math.sin(th);
+    ring.setXYZ(i, vd.x + cx * r, -0.02, vd.z + sz * r);
+    ring.setXYZ(R + i, vd.x + cx * (r + 500), -0.02, vd.z + sz * (r + 500));
+    vd.depths.forEach((d, j) => wall.setXYZ(j * R + i, vd.x + cx * r, -d, vd.z + sz * r));
+  }
+  ring.needsUpdate = wall.needsUpdate = true;
+  const dark = 1 - smooth(VOID_DARK[0], VOID_DARK[1], vd.cover), col = vd.wall.geometry.attributes.color;
+  for (let i = 0; i < col.array.length; i++) col.array[i] = vd.cols[i] * dark;
+  col.needsUpdate = true;
+  if (actx && sfxOut) sfxOut.gain.setTargetAtTime(SFX_VOL * dark, actx.currentTime, 0.3);  // ...and everything goes quiet
+  document.body.classList.toggle('void-ui', vd.cover > VOID_DARK[0]);                   // (the label and controls fade away)
+  // a llama still standing where it reaches collapses where it stands
+  for (const l of llamas) if (l !== player && !l.fallen && Math.hypot(l.group.position.x - vd.x, l.group.position.z - vd.z) < vd.r) { l.sick = 1; l.keel(); }
+  // whatever its edge reaches tips over the brink: it pivots on the rim (gravity pulling it over,
+  // slowly at first, then faster), and once it's gone over, falls, still turning
+  for (const c of voidCandidates()) {
+    const dx = c.x - vd.x, dz = c.z - vd.z, d = Math.hypot(dx, dz);
+    if (d > voidRim(Math.atan2(dz, dx)) - c.size * 0.2) continue;
+    c.mark();
+    const ix = d > 0.01 ? -dx / d : 1, iz = d > 0.01 ? -dz / d : 0, lever = Math.max(0.4, c.size * 0.35);
+    vd.falling.push({ c, ix, iz, lever, px: c.x - ix * lever, pz: c.z - iz * lever, th: 0, w: c.flat ? 0 : 0.05,
+      free: !!c.flat, x: c.x, y: 0, z: c.z, vx: 0, vy: 0, vz: 0, axis: new THREE.Vector3(iz, 0, -ix) }); // (this axis tips it inward)
+  }
+  for (let i = vd.falling.length - 1; i >= 0; i--) {
+    const f = vd.falling[i];
+    if (!f.free) {                                       // tipping on the rim
+      f.w += (VOID_FALL / (2 * f.lever)) * Math.sin(f.th + 0.12) * dt;
+      f.th += f.w * dt;
+      const ct = Math.cos(f.th), st = Math.sin(f.th);
+      f.x = f.px + f.ix * f.lever * ct; f.y = -f.lever * st; f.z = f.pz + f.iz * f.lever * ct;
+      if (f.th > 1.05) {                                 // over: off it goes, at the speed it was turning
+        f.free = true;
+        f.vx = -f.ix * f.w * f.lever * st; f.vy = -f.w * f.lever * ct; f.vz = -f.iz * f.w * f.lever * st;
+        sfx.gulp?.(_vp.set(f.x, 0, f.z));               // sfx:
+      }
+    } else {                                             // falling
+      f.vy -= VOID_FALL * dt;
+      f.x += f.vx * dt; f.y += f.vy * dt; f.z += f.vz * dt; f.th += f.w * dt;
+    }
+    _vq.setFromAxisAngle(f.axis, f.th);
+    f.c.set(f.x, f.y, f.z, _vq);
+    if (f.y < -120) { f.c.done?.(); vd.falling.splice(i, 1); }   // well out of sight
+  }
+  // how much of the view it covers: its radius against the farthest corner of the visible ground
+  let far = 0;
+  for (const [x, y] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    ray.setFromCamera(_vn.set(x, y), camera);
+    if (ray.ray.intersectPlane(ground, _vp)) far = Math.max(far, Math.hypot(_vp.x - vd.x, _vp.z - vd.z));
+  }
+  vd.cover = far ? Math.min(1, vd.r * 0.95 / far) : 0;
+  if (vd.cover >= 1 && vd.end < 0) vd.end = 0;          // all black: a moment of it, then the snap
+  if (vd.end >= 0 && (vd.end += dt) > VOID_HOLD) voidReset();
+}
+// back to the title card, with a snap, and a new world behind it (the yellow butterfly flies on)
+function voidReset() {
+  if (actx) introSnapSound(actx.currentTime + 0.01);
+  // the title card, as it was
+  introOn = true; introGo = false;
+  introEl.classList.remove('go');
+  introEl.style.setProperty('--swell', LOGO_START);
+  document.body.append(introEl);
+  if (flies.length) introFly();
+  document.body.classList.remove('void-ui');
+  if (actx) { sfxOut.gain.cancelScheduledValues(actx.currentTime); sfxOut.gain.setValueAtTime(0, actx.currentTime); } // (held back until Play)
+  // the pit closes
+  vd.on = voidOpen = false; vd.wait = VOID_WAIT; vd.r = 0; vd.cover = 0; vd.end = -1; vd.falling.length = 0;
+  vd.ring.visible = vd.wall.visible = false;
+  // a new herd
+  for (const l of llamas.slice(1)) l.dispose();
+  llamas.length = 1;
+  line.length = 0; renderBubble();
+  while (llamas.length < START_HERD) addLlama();
+  // your llama, back where it began, unseen until Play
+  player.group.position.set(0, 0, 0);
+  player.setFar(COATS.black.far);
+  hasTarget = false; marker.visible = false; pointerIdle = 0;
+  // everything that fell, put back
+  for (const b of balls.slice()) { removeBall(b); disposeBall(b); }
+  for (const b of loose.splice(0)) disposeBall(b.tr);
+  if (voidRamp) { ramp = voidRamp; voidRamp = null; scene.add(ramp.group); }
+  if (ramp) { ramp.gone = false; ramp.group.position.set(ramp.x, 0, ramp.z); ramp.group.quaternion.copy(ramp.home); }
+  if (piles) {
+    for (const p of piles.all) {
+      if (!piles.pieces.includes(p)) piles.world.addBody(p.body);
+      p.body.position.copy(p.home); p.body.quaternion.copy(p.homeQ);
+      p.body.velocity.set(0, 0, 0); p.body.angularVelocity.set(0, 0, 0); p.body.sleep();
+      scene.add(p.mesh);
+    }
+    piles.pieces = piles.all.slice(); piles.fallen = piles.fallen.map(() => false); piles.targets.length = 0;
+    syncPiles();
+  }
+  if (grass) for (const t of grass.tufts) { Object.assign(t, t.home); t.y = 0; t.gone = false; }
+  if (paint) { paint.gone = false; paint.blob.visible = true; paint.blob.position.y = 0.01; paint.list.length = 0; }
+  // the weather, the blight, the music, all as new
+  rainT = -1; rainK = 0; rainWait = RAIN_EVERY[0] + Math.random() * (RAIN_EVERY[1] - RAIN_EVERY[0]);
+  blight = 0; blightGlitch = 0; burst.t = 0; burst.wait = 3;
+  if (glitch.snd) { glitchSoundEnd(glitch.snd); glitch.snd = null; burst.own = false; }
+  blightIn.disabled = false;
+  if (drone) { for (const o of drone.oscs) o.stop(); drone = null; }
+  if (musicLP) musicLP.frequency.value = 12000;
+  Object.assign(music, { wait: 1.5, deg: 3, n: 0 });
+  // the blue butterfly, back
+  for (const fl of flies.slice(1)) if (fl.state === 'gone' || fl.state === 'fall') {
+    randomGroundPoint(fl.g.position, { x: 0, z: 0 }, 0); fl.g.position.y = 4; fl.g.visible = true; pickFlight(fl);
+  }
 }
 
 // ---------- loop ----------

@@ -118,10 +118,58 @@ canvas { display: block; touch-action: none; }
 #hold-tip .bar i { display: block; height: 100%; width: 0; border-radius: 3px; }
 #hold-tip.done { animation: tip-pop 0.35s ease-out forwards; }
 @keyframes tip-pop { from { opacity: 1; scale: 1; } to { opacity: 0; scale: 1.3; } }
+/* hints: a little speech-bubble pill at the bottom, so they're noticed */
 #hint {
-  position: fixed; bottom: 24px; width: 100%; text-align: center;
-  font: 13px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-  color: #bbb; user-select: none; pointer-events: none; transition: opacity 1s;
+  position: fixed; bottom: 28px; left: 50%; translate: -50% 0; z-index: 4; white-space: nowrap;
+  padding: 9px 16px; background: #fff; border: 1px solid #e4e4e4; border-radius: 14px; box-shadow: 0 3px 10px rgba(0,0,0,0.06);
+  font: 14px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  color: #777; user-select: none; pointer-events: none; transition: opacity 1s;
 }
 /* rain: the light dims a touch during a shower (opacity set from main.js) */
 #rain-tint { position: fixed; inset: 0; background: #34404f; opacity: 0; pointer-events: none; z-index: 1; }
+/* intro: a black title card with "Llama Land" cut out of it, so the scene shows through the type.
+   main.js swells it (--swell) and removes it on the snap. To remove: delete #intro here and in index.html. */
+#intro {
+  --logo-w: min(86vw, max(56vw, 300px), 820px); --swell: 1;
+  position: fixed; inset: 0; z-index: 20; background: #000;
+  -webkit-mask: url(llama-land.svg) center / calc(var(--logo-w) * var(--swell)) auto no-repeat, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: url(llama-land.svg) center / calc(var(--logo-w) * var(--swell)) auto no-repeat, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+#play {
+  position: absolute; left: 50%; top: calc(50% + var(--logo-w) * var(--swell) * 0.142 + 7vh); translate: -50% 0;
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 18px; background: none; border: none; color: #fff; opacity: 0.55;
+  cursor: var(--cursor-hand); transition: opacity 0.2s;
+}
+#play:hover, #play:focus-visible { opacity: 1; outline: none; }
+#play svg { display: block; width: 10px; height: 10px; }
+#play span { font: 11px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; letter-spacing: 0.3em; text-transform: uppercase; margin-right: -0.3em; }
+#intro.go #play { visibility: hidden; }
+/* intro: a see-through canvas above the card, where one butterfly keeps flying (main.js, butterflies) */
+#intro-fly { position: fixed; inset: 0; z-index: 21; pointer-events: none; }
+/* ramp: the summit glitch (a 2D canvas over the scene, drawn in main.js) and the lightning flash */
+#glitch { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+#flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 1; }
+/* blight: how far it's spread, beside its switch in the panel */
+#blight-pct { margin-left: auto; color: #aaa; font-variant-numeric: tabular-nums; }
+/* void: near the end the label, controls and hints fade away */
+#label, #panel-toggle, #panel, #hint, #herd-bubble { transition: opacity 1.5s; }
+body.void-ui :is(#label, #panel-toggle, #panel, #hint, #herd-bubble) { opacity: 0 !important; pointer-events: none; }
+/* intro: the cute title (the calm version) — the coral logo over the live scene, a plain Play button */
+#intro.cute { background: none; -webkit-mask: none; mask: none; pointer-events: none; }
+#intro.cute .logo { position: absolute; left: 50%; top: 50%; translate: -50% -60%; width: min(70vw, 720px); pointer-events: none; }
+#intro.cute .logo :is(svg, img) { display: block; width: 100%; height: auto; overflow: visible; }
+/* each letter pops up from its baseline, one after another */
+#intro.cute .logo path {
+  transform-box: fill-box; transform-origin: 50% 100%;
+  animation: letter-in 0.55s cubic-bezier(.3, 1.3, .5, 1) both; animation-delay: calc(0.25s + var(--i) * 0.045s);
+}
+@keyframes letter-in { from { transform: translateY(10%) scale(0.85); opacity: 0; } 50% { opacity: 1; } }
+#intro.cute #play {
+  top: calc(50% + min(70vw, 720px) * 0.08 + 56px); pointer-events: auto; opacity: 1;
+  padding: 9px 20px; background: #fff; border: 1px solid #bbb; border-radius: 8px;
+  font: 17px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; color: #555;
+}
+#intro.cute #play:hover, #intro.cute #play:focus-visible { border-color: #888; color: #333; }
