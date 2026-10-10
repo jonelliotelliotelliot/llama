@@ -4,7 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>llamaland</title>
-<link rel="stylesheet" href="style.css" />
+<!-- ?v=…: change it (to the date) whenever style.css or main.js changes, so browsers fetch the new files -->
+<link rel="stylesheet" href="style.css?v=2026-10-10" />
 <script type="importmap">
   { "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
@@ -14,7 +15,6 @@
 </script>
 </head>
 <body>
-<div id="label">llamaland</div>
 <div id="herd-bubble"></div>
 <div id="hold-tip"><span></span><div class="bar"><i></i></div></div>
 <div id="poke-tip">poke me ♪</div>
@@ -40,6 +40,6 @@
   <div id="llama-list"></div>
   <div class="buttons"><button id="add-llama">+ add</button><button id="remove-llama">− remove</button></div>
 </div>
-<script type="module" src="main.js"></script>
+<script type="module" src="main.js?v=2026-10-10"></script>
 </body>
 </html>

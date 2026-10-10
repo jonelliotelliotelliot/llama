@@ -16,6 +16,10 @@ const FIXED_SPEED = params.has('speed') ? parseFloat(params.get('speed')) : null
 const FIXED_PHASE = params.has('phase') ? parseFloat(params.get('phase')) : null;
 const TIME_SCALE = parseFloat(params.get('slow') || '1');
 const ZOOM = parseFloat(params.get('zoom') || '0.6'); // starts zoomed out to fit the herd
+// the "controls" button and its panel. Hidden, nothing saved from the panel before is used
+// either (it couldn't be changed back): sound, music, tune, rain and blight are as set here.
+const CONTROLS = false;       // ← true: show the controls
+const saved = (key) => { if (!CONTROLS) return null; try { return localStorage.getItem(key); } catch { return null; } };
 
 // ---------- palette ----------
 const C = {
@@ -254,7 +258,7 @@ function render() {
   drawHerd();
   renderer.render(scene, camera);
   introLayer?.draw();                       // intro: the butterfly above the title card
-  if (glitch.cv) drawGlitch();              // ramp: the summit glitch, over your llama
+  if (glitch.mesh) drawGlitch();            // ramp: the summit glitch (blight: your llama's), over it
 }
 
 // ---------- cursor marker ----------
@@ -414,6 +418,14 @@ const LOOK_AFTER = 3;           // seconds of cursor stillness before it starts 
 const KUSH_AFTER = 27;          // ...and before it lies down
 const DANCE_LEN = 2.7;
 const DROP_H = 9, DROP_G = 100;  // intro: your llama's drop into the scene (height, gravity)
+const SETTLE_HOLD = 2.6;        // intro: seconds after the drop that yours ignores the cursor (the landing, the look)...
+const SETTLE_EASE = 3.5;        // ...then its top speed builds from a gentle walk to full over this long
+const SETTLE_WALK = 2.5;        // (that walk)
+// turning: well away from where it's going, it keeps walking as it turns (a tight arc, not a spin
+// on the spot); close by, or held up, it turns where it stands, pivoting on its hind legs
+const ARC_SPEED = 2.4;          // walking pace kept up through a turn
+const ARC_FROM = 8;             // ...when the goal is at least this far away
+const PIVOT_BACK = 1.4;         // turning on the spot: the point it turns about, this far behind its middle
 const KEEL_SWAY = 2.4, KEEL_TIP = 0.55; // blight: seconds staggering before it goes, and of the fall itself
 const KEEL_EDGE = 1.07;          // blight: the outer edge of its hooves (what it tips over on)
 const KEEL_OVER = 0;            // blight: how far past its side it rolls (rad; more lifts the stiff legs)
@@ -713,14 +725,10 @@ const TUNES = {
              voice: [[1, 1, 1.4, 'sine'], [2, 0.25, 0.6, 'sine']] },
   koto:    { name: 'Koto · in scale', scale: [0, 1, 5, 7, 8], base: 329.63,      // E4, plucked
              voice: [[1, 1, 1.2, 'triangle'], [2, 0.3, 0.3, 'sine'], [3, 0.1, 0.15, 'sine']] },
-  // renaissance fair: a plucked lute (a doubled, slightly detuned course; upper harmonics fade fast)
-  // in the old dorian mode, and in the music a bourdon of open fifths underneath
-  lute:    { name: 'Lute · dorian', scale: [0, 2, 3, 5, 7, 9, 10], base: 293.66,  // D4
-             voice: [[1, 1, 1.1, 'triangle'], [1.004, 0.45, 1, 'triangle'], [2, 0.4, 0.4, 'sine'], [3, 0.22, 0.22, 'sine'], [4, 0.1, 0.12, 'sine']],
-             bass: [0, 4, 0, 3], fifths: true },
 };
-let tune = TUNES.marimba;
-try { tune = TUNES[localStorage.getItem('llama-tune')] ?? tune; } catch {}
+// a different one each visit (and each time round the loop) — or the one picked in the controls
+const randomTune = () => { const all = Object.values(TUNES); return all[Math.floor(Math.random() * all.length)]; };
+let tune = TUNES[saved('llama-tune')] ?? randomTune();
 function noteHz(deg) {
   const n = tune.scale.length, oct = Math.floor(deg / n);
   return tune.base * 2 ** ((12 * oct + tune.scale[deg - oct * n]) / 12);
@@ -893,7 +901,7 @@ let musicOn = MUSIC, musicOut = null, musicLP = null, drone = null;
 let blight = 0;                // blight: how far it has spread, 0..1 (kept up by that section; music, rain read it)
 let voidOpen = false;          // void: the pit is open (set in that section; read by sections before it)
 let blightGlitch = 0;          // blight: your llama glitching now and then (0 or a burst's strength; drawGlitch reads it)
-try { if (localStorage.getItem('llama-music') === 'off') musicOn = false; } catch {}
+if (saved('llama-music') === 'off') musicOn = false;
 const music = { wait: 1.5, deg: 3, n: 0 };
 // the music's own output: a level (for fades) and a low-pass (blight: muffles it as it rots)
 function musicBus() {
@@ -931,11 +939,8 @@ function updateMusic(dt) {
   musicBus();
   musicLP.frequency.setTargetAtTime(700 + 11000 * (1 - rot) ** 3, t, 2);   // blight: muffled
   const off = () => -rot * 70 + (Math.random() - 0.5) * rot * 90;          // blight: flat, and unsteady
-  if (music.n % 8 === 0 && rot < 0.85) {                         // low note (lute: an open fifth)
-    const low = (tune.bass ?? [0, 3, 1, 4])[(music.n / 8) % 4] - n;
-    musicNote(t, low, MUSIC_VOL * 0.9 * (1 - rot), 4, off());
-    if (tune.fifths) musicNote(t, low + 4, MUSIC_VOL * 0.55 * (1 - rot), 4, off());
-  }
+  if (music.n % 8 === 0 && rot < 0.85)                           // low note
+    musicNote(t, [0, 3, 1, 4][(music.n / 8) % 4] - n, MUSIC_VOL * 0.9 * (1 - rot), 4, off());
   if (Math.random() < 0.82 * (1 - rot) ** 1.5) {                 // melody (sometimes a rest — blight: more and more)
     music.deg += pick([-2, -1, -1, 0, 1, 1, 2]) + (music.deg < 2 ? 1 : music.deg > 7 ? -1 : 0)
       - (Math.random() < rot * 0.35 ? 1 : 0);                      // blight: sinking
@@ -982,17 +987,18 @@ function updateDrone(rot) {
 // fades in. Until the snap the scene's own sounds and music are held back.
 // To turn off: INTRO_ON = false. To remove: delete this section, #intro in index.html + style.css, and the
 // small hooks marked "intro:".
-const BLIGHT_ON = true;        // ← false: no infection at all (the calm version: and the cute title, below)
+const BLIGHT_ON = !(params.has('calm') || ['off', 'false'].includes(params.get('blight'))); // ← false: no infection at all (the calm version, with the cute title) — ?calm in the address too
 const INTRO_ON = true;        // ← false: skip the title screen and start straight in the scene
 const INTRO_RAIN = false;      // ← false: no shower over the title screen
 const INTRO = INTRO_ON && SFX; // (never in review mode)
 // the calm version (no blight — switched off here, or in the panel last time): a cute title instead.
 // The coral logo sits over the live scene with a Play button; no drone, no swell — just the snap and the drop.
-const INTRO_CUTE = INTRO && (!BLIGHT_ON || (() => { try { return localStorage.getItem('llama-blight') === 'off'; } catch { return false; } })());
+const INTRO_CUTE = INTRO && (!BLIGHT_ON || saved('llama-blight') === 'off');
 const CUTE_SNAP = 0.12;       // seconds from Play to the snap
-const INTRO_SPIN = 4;         // degrees a second the camera slowly orbits while the title waits...
+const INTRO_SPIN = 4;         // degrees a second the camera slowly orbits while the cute title waits...
 const ORBIT_HOME = camOrbit;  // ...and from Play it glides back to where it started (the angle the ramp was placed for)
-const ORBIT_HOME_TIME = 1.6;  // seconds that glide takes (eased in and out, the short way round)
+const ORBIT_HOME_TIME = 1.2;  // seconds that glide takes at the least (eased in and out, the short way round)...
+const ORBIT_HOME_SPEED = 90;  // ...longer for a long way round: it never turns faster than this (degrees a second)
 let homing = null;            // { from, by, t }: the glide home in progress
 const INTRO_SWELL = 2.5;        // seconds the title swells before the snap
 const LOGO_START = 0.6;         // the title's size at first (× its width in style.css, --logo-w)
@@ -1028,7 +1034,10 @@ else {
 function introPlay() {
   if (introGo) return;
   introGo = true;
-  if (INTRO_SPIN) homing = { from: camOrbit, by: ((ORBIT_HOME - camOrbit) % 360 + 540) % 360 - 180, t: 0 }; // the slow turn glides home
+  if (INTRO_SPIN && INTRO_CUTE) {                      // the slow turn glides home (smoother's top speed is 1.875× the average)
+    const by = ((ORBIT_HOME - camOrbit) % 360 + 540) % 360 - 180;
+    homing = { from: camOrbit, by, t: 0, len: Math.max(ORBIT_HOME_TIME, 1.875 * Math.abs(by) / ORBIT_HOME_SPEED) };
+  }
   sfxStart();
   introEl.classList.add('go');
   const lag = actx ? 0.03 + (actx.outputLatency || actx.baseLatency || 0) : 0; // so the picture lands with the sound
@@ -1446,7 +1455,7 @@ function updateRamp(dt) {
 // The payoff for getting your llama to the top. 'glitch': it glitches, over a low, broken hum, and
 // a shower rolls in (or, if it's already raining, lightning). 'rainbow': its coat goes rainbow, it
 // pronks a few times and a little jingle plays. Once per climb (it has to get back down first).
-const SUMMIT_FX = 'glitch'; // ← 'glitch' or 'rainbow'
+const SUMMIT_FX = BLIGHT_ON ? 'glitch' : 'rainbow'; // ← the blight version glitches; the calm one goes rainbow, dances and jingles
 const SUMMIT_LEN = 4;      // seconds of glitch / rainbow
 const GLITCH_VOL = 0.012;  // its little digital chirps (0: silent)
 const GLITCH_HUM = 0.05;   // its low, distorted hum (0: silent)
@@ -1471,54 +1480,93 @@ function rampSummit(dt) {
 // a 2D canvas above it, broken up — its colour channels pulled apart, slices shoved sideways, a
 // frame held now and then — in stutters, with clean frames between.
 let summitGlitch = 0;      // 0 off … 1 strongest
-const glitch = { cv: null, g: null, work: null, red: null, cyan: null, hold: 0, on: false, snd: null };
+// Done on the GPU (copying the picture out of WebGL into a 2D canvas stalls it: ~2 ms a frame):
+// when a new glitch frame starts, the screen is copied into a texture (a quick GPU-side copy), and
+// one small shader draws the patch back over it — colour channels apart, slices shoved sideways —
+// covering only that area. Between new frames the texture is left as it was (the held, frozen
+// frames). No glitch: nothing extra is drawn at all.
+const GLITCH_SLICES = 6;
+const glitch = { mesh: null, hold: 0, on: false, snd: null };
 if (FIXED_SPEED === null) {    // (the summit's glitch, and blight: your llama's)
-  glitch.cv = document.createElement('canvas');
-  glitch.cv.id = 'glitch';
-  document.body.insertBefore(glitch.cv, document.getElementById('rain-tint')); // (under the rain's tint)
-  glitch.g = glitch.cv.getContext('2d');
-  for (const k of ['work', 'red', 'cyan']) glitch[k] = document.createElement('canvas');
+  const uniforms = {
+    tex: { value: null }, rect: { value: new THREE.Vector4() }, split: { value: 0 },
+    slices: { value: Array.from({ length: GLITCH_SLICES }, () => new THREE.Vector3()) }, count: { value: 0 },
+  };
+  const mat = new THREE.ShaderMaterial({
+    uniforms, depthTest: false, depthWrite: false,
+    vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `
+      uniform sampler2D tex; uniform vec4 rect; uniform float split;
+      uniform vec3 slices[${GLITCH_SLICES}]; uniform int count;
+      void main() {
+        vec2 q = gl_FragCoord.xy, p = q;            // q: this pixel; p: where in the copy it shows
+        bool hit = q.x >= rect.x && q.x < rect.z && q.y >= rect.y && q.y < rect.w;
+        for (int i = 0; i < ${GLITCH_SLICES}; i++) {  // a slice of the patch, shoved sideways
+          if (i >= count) break;
+          vec3 s = slices[i];                       // (band bottom, band top, shove)
+          if (q.y >= s.x && q.y < s.y && q.x >= rect.x + s.z && q.x < rect.z + s.z) { p = vec2(q.x - s.z, q.y); hit = true; }
+        }
+        if (!hit) discard;
+        vec2 size = vec2(textureSize(tex, 0));
+        vec3 c = texture2D(tex, p / size).rgb;
+        if (split > 0.0) c = vec3(texture2D(tex, (p + vec2(split, 0.0)) / size).r, texture2D(tex, (p - vec2(split, 0.0)) / size).gb);
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setIndex([0, 1, 2, 0, 2, 3]);
+  glitch.mesh = new THREE.Mesh(geo, mat);
+  glitch.mesh.frustumCulled = false;
+  glitch.scene = new THREE.Scene();
+  glitch.scene.add(glitch.mesh);
+  glitch.cam = new THREE.Camera();
+  glitch.size = new THREE.Vector2();
 }
 function drawGlitch() {
-  const { cv, g, work, red, cyan } = glitch, src = renderer.domElement, glitchK = Math.max(summitGlitch, blightGlitch);
-  if (glitchK <= 0) { if (glitch.on) { g.clearRect(0, 0, cv.width, cv.height); glitch.on = false; } return; }
-  if (cv.width !== src.width || cv.height !== src.height) { cv.width = src.width; cv.height = src.height; }
-  if (glitch.hold-- > 0) return;                         // a held (frozen) frame
-  g.clearRect(0, 0, cv.width, cv.height);
-  glitch.on = false;
-  glitch.hold = Math.floor(Math.random() * 4);
-  if (Math.random() > 0.3 + 0.55 * glitchK) { glitchGate(false); return; } // a clean frame (and silence)
-  glitchGate(true);
-  const s = src.width / innerWidth, r = player.screenRect(), pad = (r.x1 - r.x0) * 0.3;
-  const x0 = Math.max(0, Math.floor((r.x0 - pad) * s)), x1 = Math.min(src.width, Math.ceil((r.x1 + pad) * s));
-  const y0 = Math.max(0, Math.floor((r.y0 - pad * 0.3) * s)), y1 = Math.min(src.height, Math.ceil((r.y1 + pad * 0.3) * s));
-  const w = x1 - x0, h = y1 - y0;
-  if (w < 4 || h < 4) return;
-  for (const c of [work, red, cyan]) if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
-  const wg = work.getContext('2d');
-  if (Math.random() < 0.75) {   // channels apart: red from a little to one side, green + blue from the other
-    const d = Math.round((2 + Math.random() * 6) * s * glitchK);
-    for (const [c, col, off] of [[red, '#f00', -d], [cyan, '#0ff', d]]) {
-      const cg = c.getContext('2d');
-      cg.globalCompositeOperation = 'source-over';
-      cg.drawImage(src, x0 - off, y0, w, h, 0, 0, w, h);
-      cg.globalCompositeOperation = 'multiply';
-      cg.fillStyle = col;
-      cg.fillRect(0, 0, w, h);
+  const glitchK = Math.max(summitGlitch, blightGlitch);
+  if (glitchK <= 0) { glitch.on = false; return; }
+  const u = glitch.mesh.material.uniforms, size = renderer.getDrawingBufferSize(glitch.size), W = size.x, H = size.y;
+  if (glitch.hold-- <= 0) {                              // a new frame (or a clean one)
+    glitch.hold = Math.floor(Math.random() * 4);
+    glitch.on = false;
+    if (Math.random() > 0.3 + 0.55 * glitchK) { glitchGate(false); return; } // a clean frame (and silence)
+    // the patch around your llama, in drawing-buffer pixels (y up, as WebGL counts)
+    const k = W / innerWidth, r = player.screenRect(), pad = (r.x1 - r.x0) * 0.3;
+    const x0 = Math.max(0, Math.floor((r.x0 - pad) * k)), x1 = Math.min(W, Math.ceil((r.x1 + pad) * k));
+    const y0 = Math.max(0, Math.floor(H - (r.y1 + pad * 0.3) * k)), y1 = Math.min(H, Math.ceil(H - (r.y0 - pad * 0.3) * k));
+    const w = x1 - x0, h = y1 - y0;
+    if (w < 4 || h < 4) { glitchGate(false); return; }
+    glitchGate(true);
+    if (!glitch.tex || glitch.tex.image.width !== W || glitch.tex.image.height !== H) {
+      glitch.tex?.dispose();
+      glitch.tex = new THREE.FramebufferTexture(W, H);
+      glitch.tex.minFilter = glitch.tex.magFilter = THREE.NearestFilter;
+      u.tex.value = glitch.tex;
     }
-    wg.globalCompositeOperation = 'source-over'; wg.drawImage(red, 0, 0);
-    wg.globalCompositeOperation = 'lighter'; wg.drawImage(cyan, 0, 0);
-    wg.globalCompositeOperation = 'source-over';
-  } else wg.drawImage(src, x0, y0, w, h, 0, 0, w, h);
-  g.drawImage(work, x0, y0);
-  const unit = Math.max(2, Math.round(2 * s));          // slices shoved sideways (in chunky steps)
-  for (let i = 0, n = 1 + Math.floor(Math.random() * 5 * glitchK); i < n; i++) {
-    const sh = unit * (1 + Math.floor(Math.random() * h * 0.12 / unit)), sy = Math.floor(Math.random() * (h - sh));
-    const dx = Math.round((Math.random() - 0.5) * w * 0.35 * glitchK / unit) * unit;
-    g.drawImage(work, 0, sy, w, sh, x0 + dx, y0 + sy, w, sh);
+    renderer.copyFramebufferToTexture(glitch.tex);       // this frame, frozen until the next
+    u.rect.value.set(x0, y0, x1, y1);
+    u.split.value = Math.random() < 0.75 ? Math.round((2 + Math.random() * 6) * k * glitchK) : 0;
+    const unit = Math.max(2, Math.round(2 * k)), n = Math.min(GLITCH_SLICES, 1 + Math.floor(Math.random() * 5 * glitchK));
+    let lo = x0, hi = x1;
+    for (let i = 0; i < n; i++) {
+      const sh = unit * (1 + Math.floor(Math.random() * h * 0.12 / unit)), sy = y0 + Math.floor(Math.random() * (h - sh));
+      const dx = Math.round((Math.random() - 0.5) * w * 0.35 * glitchK / unit) * unit;
+      u.slices.value[i].set(sy, sy + sh, dx);
+      lo = Math.min(lo, x0 + dx); hi = Math.max(hi, x1 + dx);
+    }
+    u.count.value = n;
+    // the quad: just the area it can touch
+    const nx = (x) => (x / W) * 2 - 1, ny = (y) => (y / H) * 2 - 1, pos = glitch.mesh.geometry.attributes.position;
+    pos.setXYZ(0, nx(lo), ny(y0), 0); pos.setXYZ(1, nx(hi), ny(y0), 0); pos.setXYZ(2, nx(hi), ny(y1), 0); pos.setXYZ(3, nx(lo), ny(y1), 0);
+    pos.needsUpdate = true;
+    glitch.on = true;
+    if (Math.random() < 0.35) sfx.glitch(player.group.position);   // sfx:
   }
-  glitch.on = true;
-  if (Math.random() < 0.35) sfx.glitch(player.group.position);   // sfx:
+  if (!glitch.on) return;
+  renderer.autoClear = false;
+  renderer.render(glitch.scene, glitch.cam);
+  renderer.autoClear = true;
 }
 // sfx: the glitch's hum — two low saws a semitone apart (they beat), crushed through a stepped
 // distortion, plus a crackle. A gate cuts it in and out in step with the picture (on while a
@@ -1710,6 +1758,8 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   let act = null;                 // { t, ball, bx, bz, side } – a kick in progress
   let fall = null;                // blight: { t, side, k, up } keeling over / lying on its side / getting back up
   let fallWant = false;           // blight: it's time (waits until it's standing and not busy)
+  let jolt = null;                // blight: a fallen one, clicked: { t, dx, dz, done } a little hop and shift
+  let curious = 0;                // blight: looking at a fallen one (0..1, smoothed)
 
   // hit by a ball: stops short with a big startled jump (or scrambles up if lying down), perks
   // up, says "bip-bip", and looks toward where the ball came from for a moment
@@ -1748,8 +1798,16 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     return blocked(s) && !blocked(-s) ? -s : s;
   }
   function poke(quiet = false) {
-    if (fall) return;                              // blight:
+    if (fall) {                                    // blight: a fallen one only shifts, like a toy would
+      if (!fall.up && fall.t > KEEL_SWAY + KEEL_TIP && !jolt && !self.gone) {
+        const l = Math.hypot(camDir.x, camDir.z) || 1, r = (Math.random() - 0.5) * 0.6;
+        jolt = { t: 0, done: 0, dx: -camDir.x / l * 0.9 + r, dz: -camDir.z / l * 0.9 - r };
+        sfx.keel(llama.position);                  // sfx:
+      }
+      return;
+    }
     if (!mine && !quiet) sfx.boop(llama.position); // sfx: (yours: its hop makes the sound)
+    if (ill()) { perk = 1; brain.onPoke(); if (kushT > 0) kushDir = -1; return; } // blight: sick — it notices, but no hop or dance
     joy += 1;
     perk = 1;
     smile = Math.min(1, joy / 2.5);
@@ -1761,10 +1819,19 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
   }
 
 
+  const ill = () => (self.sick ?? 0) > 0.2;          // blight: visibly sick (no hearts, no dancing)
+  self.ill = ill;
+
   // --- brain: where to go, when to rest ---
   const brain = brainKind === 'cursor' ? {
     goal: null, stopDist: STOP_DIST, maxSpeed: MAX_SPEED, ballSpeed: MAX_SPEED, turnDist: 5,
-    tick() { this.goal = hasTarget ? target : null; },
+    hold: 0, since: 99,             // intro: after the drop it stays put a moment, then eases into moving
+    tick(dt) {
+      this.hold = Math.max(0, this.hold - dt);
+      this.goal = hasTarget && this.hold <= 0 ? target : null;
+      if (this.hold <= 0) this.since += dt;
+      this.maxSpeed = lerp(SETTLE_WALK, MAX_SPEED, smooth(0, SETTLE_EASE, this.since)); // (a walk at first, however far the cursor)
+    },
     idle: () => pointerIdle,
     wantKush: () => pointerIdle > KUSH_AFTER,
     onPoke() { pointerIdle = 0; },
@@ -1785,6 +1852,14 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       if (stepAside(llama.position, this.dest)) {
         this.goal = this.dest; this.napFor = 0; this.yieldT = 1.6; this.maxSpeed = 5.5; this.stopDist = 1.0; self.yielding = true;
         this.best = Infinity; this.stuckT = 0;
+        return;
+      }
+      // blight: one has fallen nearby — walks over, stops a little short, and looks at it a while
+      if (this.inspect) {
+        const g = this.inspect;
+        if (g.other.gone || !llamas.includes(g.other) || (g.t += dt) > 22) { this.endInspect(); return; }
+        this.goal = g.spot; this.stopDist = 1.0; this.maxSpeed = 3.2;
+        if (Math.hypot(g.spot.x - llama.position.x, g.spot.z - llama.position.z) < 2 && speed < 0.3 && (g.near += dt) > INSPECT_LOOK) this.endInspect();
         return;
       }
       // greet: two that meet sometimes walk up nose to nose, linger a moment, and go on their way
@@ -1833,6 +1908,14 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     best: Infinity, stuckT: 0,
     greet: null, greetCool: 8 + Math.random() * 20,
     canGreet() { return (self.sick ?? 0) < 0.3 && !fall /* blight: the sick keep to themselves */ && !this.greet && this.greetCool <= 0 && !this.following && !self.yielding && this.napFor <= 0 && !goalBall && !act && kushT === 0 && !dance && pet < 0.15; },
+    inspect: null,
+    canInspect() { return !this.inspect && !this.greet && !this.following && !self.yielding && !fall && !fallWant && kushT === 0 && !dance && (self.sick ?? 0) < 0.6; },
+    startInspect(other) {
+      const o = other.group.position, dx = llama.position.x - o.x, dz = llama.position.z - o.z, d = Math.hypot(dx, dz) || 1;
+      this.inspect = { other, t: 0, near: 0, spot: new THREE.Vector3(o.x + dx / d * 6.5, 0, o.z + dz / d * 6.5) };
+      this.goal = null; this.napFor = 0; this.best = Infinity; this.stuckT = 0; perk = 1;   // (ears up: what was that?)
+    },
+    endInspect() { this.inspect = null; this.goal = null; this.stopDist = 1.0; this.wait = 1 + Math.random() * 2; },
     startGreet(other, first) { this.greet = { other, t: 0, met: 0, first }; self.greeting = other; this.goal = null; },
     endGreet() {
       this.greet = null; self.greeting = null; this.goal = null; this.stopDist = 1.0;
@@ -1878,7 +1961,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     self.petting = petting;
     if (petting) {
       smile = 1;
-      if ((petHeart -= dt) < 0) { heart(head); petHeart = 1.4 + Math.random(); }
+      if ((petHeart -= dt) < 0) { if (!ill()) heart(head); petHeart = 1.4 + Math.random(); } // (blight: no hearts from the sick)
       if ((petHum -= dt) < 0) { sfx.hum(llama.position); petHum = 2.2 + Math.random() * 0.8; } // sfx:
     }
 
@@ -1989,7 +2072,9 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
 
     vTarget = dist < stopDist ? 0 : Math.min(goalBall ? brain.ballSpeed : brain.maxSpeed, (dist - stopDist) * 0.85);
     if (goalBall && dist < stopDist + 0.35 && Math.abs(diff) >= 0.15) vTarget = 0; // close but misaligned: turn first
-    vTarget *= clamp(0.5 + 0.5 * Math.cos(course), 0, 1) ** 1.5; // ease off to turn
+    const v0 = vTarget;
+    vTarget *= clamp(0.5 + 0.5 * Math.cos(course), 0, 1) ** 1.5; // ease off to turn...
+    if (!goalBall && dist > ARC_FROM && !onRamp(llama.position.x, llama.position.z, 1)) vTarget = Math.max(vTarget, Math.min(v0, ARC_SPEED)); // ...but far off, keep walking round (ramp: no room — turn where it stands)
     vTarget *= smooth(CONTACT, CONTACT + 5 + speed * 0.9, blockAhead); // ease off behind another llama (sooner when fast)
     vTarget *= smooth(CONTACT, CONTACT + 1.5, leaderAhead);             // trailing: only hold back right behind
     // ramp: always walk on it, and slow to a walk well before stepping onto it
@@ -2021,7 +2106,7 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     else if ((escapeT -= dt) <= 0) escapeDir = 0;
     const turnTo = blocked ? escapeDir * Math.max(Math.abs(steerAng), 0.8)
       : wrap(course + escapeDir * 0.5 * clamp(escapeT, 0, 1));
-    if (!turning && !busy && dist > (goalBall ? 1.5 : brain.turnDist) && Math.abs(course) > (goalBall ? 0.15 : 0.6)) turning = true;
+    if (!turning && !busy && dist > (goalBall ? 1.5 : Math.min(brain.turnDist, stopDist + 0.5)) && Math.abs(course) > (goalBall ? 0.15 : 0.6)) turning = true; // (a goal close behind it too: it used to just stand there)
     if (!turning && !busy && blockAhead < CONTACT + 2 && Math.abs(steerAng) > 0.2) turning = true; // blocked: turn aside
     if (turning && !blocked && Math.abs(course) < 0.05) turning = false;
     const maxTurn = speed > 0.3 ? 1.1 + speed * 0.06 : (turning || blocked ? 1.2 : 0);
@@ -2038,8 +2123,16 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     if (fall && !fall.up && fall.t < KEEL_SWAY - 0.3) wantOmega = clamp(wrap(fall.face - heading) * 2.5, -1.4, 1.4); // blight: staggers round
     else if (weak > 0 && speed > 0.3) wantOmega += weak * 1.1 * Math.sin(time * 1.3);   // blight: a drunken weave
     omega = damp(omega, wantOmega, 4, dt);
+    const h0 = heading;
     heading += omega * dt;
     llama.rotation.y = heading;
+    // turning on the spot: about a point behind its middle, so the front swings round and the hind
+    // end mostly stays put (as a llama turns — not a turntable spin); blends out as it gets going
+    const pv = PIVOT_BACK * (1 - smooth(0.2, 1.2, speed)) * (FIXED_SPEED === null && !fall ? 1 : 0);
+    if (pv > 0 && heading !== h0) {
+      llama.position.x += -pv * (Math.cos(h0) - Math.cos(heading));
+      llama.position.z -= -pv * (Math.sin(h0) - Math.sin(heading));
+    }
     llama.position.x += Math.cos(heading) * speed * dt;
     _prev.copy(llama.position);
     llama.position.z -= Math.sin(heading) * speed * dt;
@@ -2206,6 +2299,13 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
         fall.shift = shift;
       }
       tipG.position.set(0, pz * Math.sin(th) + rest, pz * (1 - Math.cos(th)) - fall.shift);
+      if (jolt) {                                    // clicked: a little hop and shift, a wobble, and down again
+        const u = Math.min(1, (jolt.t += dt) / 0.38), e = smoother(u);
+        tipG.position.y += 0.7 * 4 * u * (1 - u);
+        tipG.rotation.x += Math.sin(u * Math.PI * 2) * 0.09 * (1 - u);
+        llama.position.x += jolt.dx * (e - jolt.done); llama.position.z += jolt.dz * (e - jolt.done); jolt.done = e;
+        if (u >= 1) { puff(llama.position.x, 0, llama.position.z, 6, { spread: 2 }); jolt = null; } // dust:
+      }
       const stiff = fall.up ? k : smooth(0, 1, (t - KEEL_SWAY) / KEEL_TIP);
       for (const [, leg] of legList) {               // legs go straight and stiff, a little splayed
         leg.fx = lerp(leg.fx, leg.hip.x + (leg.front ? 0.7 : -0.8), stiff);
@@ -2227,7 +2327,8 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     neck.rotation.z = NECK_TILT - wGallop * 0.12 - neckPump - pitchA * lerp(0.4, 1, fold) + fold * 0.05 + danceNeck
       - tilt * 0.6                                        // ramp: keep the neck upright on a slope
       + Math.sin(cyc * 2) * (walkW * 0.035 + paceW * 0.02)
-      - 0.22 * weak;                                      // blight: head hangs
+      - 0.22 * weak                                       // blight: head hangs
+      - 0.28 * curious;                                   // blight: lowered, sniffing at a fallen one
 
     // idle: glance around at random; hovered: look at the viewer; dancing: bob side to side;
     // otherwise follow the cursor
@@ -2242,12 +2343,15 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
       if (ball) yawWant = clamp(wrap(Math.atan2(-(ball.tr.pos.z - llama.position.z), ball.tr.pos.x - llama.position.x) - heading), -0.9, 0.9);
     }
     yawWant += weak * 0.35 * Math.sin(time * 0.9);    // blight: head lolling
+    const ins = brain.inspect, looking = !!ins && ins.near > 0;      // blight: curious, at a fallen one
+    curious = damp(curious, looking ? 1 : 0, 3, dt);
+    if (looking) { const o = ins.other.group.position; yawWant = clamp(wrap(Math.atan2(-(o.z - llama.position.z), o.x - llama.position.x) - heading), -0.9, 0.9); }
     if (fall) yawWant = 0;                             // blight: down, it doesn't look at anything
     yawLook = damp(yawLook, yawWant, dance ? 12 : 4, dt);
     nodS = damp(nodS, fall ? 0 : lookNod * idleW, 3, dt);
     head.rotation.z = -(neck.rotation.z + pitchA) * 0.8 + nodS;
     headYaw.rotation.y = yawLook;
-    headYaw.rotation.x = petS * 0.3;                     // pet: head tilted, leaning into it
+    headYaw.rotation.x = petS * 0.3 + curious * 0.22;    // pet: head tilted, leaning into it (blight: a puzzled tilt)
 
 
     // tail: droops at rest, lifts when galloping or happy, wags while dancing
@@ -2331,9 +2435,10 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     pet(px) { if (!fall) pet = Math.min(1, pet + px / 250); }, // pet: px of gentle stroking
     keel(now) {                                          // blight: keel over (now: already lying there)
       if (fall && !fall.up) return;
-      fallWant = true; brain.onPoke();                   // (wakes it from a nap first)
+      fallWant = true; brain.onPoke(); brain.endInspect?.(); // (wakes it from a nap first; forgets what it was looking at)
       if (now) { kushT = 0; kushDir = 0; fF = fH = 0; fallWant = false; heading = keelFace(); fall = { t: KEEL_SWAY + KEEL_TIP + 1, side: keelSide(), k: 1, up: false, shift: 0 }; }
     },
+    inspect: (o) => brain.canInspect?.() && brain.startInspect(o),   // blight: go and look at a fallen one
     rise() { fallWant = false; if (fall) fall.up = true; }, // blight: get back up
     setFar(hex) { colFar.set(hex); baseFar.copy(colFar); }, // void: yours goes all black
     tip: tipG,                                           // piles: its body follows the tip
@@ -2342,8 +2447,8 @@ function createLlama({ id, coat, brain: brainKind, x = 0, z = 0, heading: headin
     canKick: () => !fall && !act && !pieceGoal && !self.followLeader && kushT === 0 && !dance && pet < 0.15, // piles:
     kickPiece(t) { pieceGoal = t; if (kushT > 0) kushDir = -1; },
     startGreet: (o, first) => brain.startGreet(o, first),
-    drop() { dropT = 0; hopT = -1; },                   // intro: appear in mid-air and fall
-    celebrate() { if (fall || fallWant) return; if (kushT > 0) kushDir = -1; dance = { t: 0 }; hopT = -1; }, // gather: finale dance (blight: not the dead)
+    drop() { dropT = 0; hopT = -1; if (mine) { brain.hold = SETTLE_HOLD; brain.since = 0; } }, // intro: appear in mid-air and fall (and settle)
+    celebrate() { if (fall || fallWant || ill()) return; if (kushT > 0) kushDir = -1; dance = { t: 0 }; hopT = -1; }, // gather: finale dance (blight: not the dead)
   });
   // a live getter (Object.assign would only copy its value once)
   Object.defineProperty(self, 'phase', { get: () => phase });
@@ -2414,6 +2519,7 @@ const MAX_LLAMAS = 12;
 let llamaCount = llamas.length;
 const $ = (sel) => document.querySelector(sel);
 const panel = $('#panel'), toggle = $('#panel-toggle');
+if (!CONTROLS) toggle.hidden = panel.hidden = true;
 const zoomIn = $('#zoom'), orbitIn = $('#orbit'), tiltIn = $('#tilt'), bgIn = $('#bg');
 const hex = (n) => '#' + n.toString(16).padStart(6, '0');
 
@@ -2452,16 +2558,28 @@ soundIn.addEventListener('change', () => {
 });
 bgIn.addEventListener('input', () => { renderer.setClearColor(bgIn.value); document.body.style.background = bgIn.value; });
 // mouse wheel / trackpad pinch zooms too
+// Trackpad: pinch zooms, two fingers sideways orbits, up and down tilts. A mouse wheel zooms — told
+// apart by its whole-notch steps (once trackpad-style scrolling has been seen, it's taken as a
+// trackpad from then on). Holding ⌥ Option, up and down always tilts (if a wheel is ever misread).
+let trackpadSeen = false;
+const isMouseWheel = (e) => {
+  if (e.deltaMode !== 0) return true;                            // lines or pages: a wheel (Firefox)
+  if (!Number.isInteger(e.deltaY) || (e.deltaX && Math.abs(e.deltaX) < Math.abs(e.deltaY))) trackpadSeen = true; // fractional or diagonal: fingers
+  return !trackpadSeen && e.wheelDeltaY !== undefined && e.wheelDeltaY !== 0 && e.wheelDeltaY % 120 === 0;
+};
 renderer.domElement.addEventListener('wheel', (e) => {
   e.preventDefault();
-  // a trackpad's two-finger swipe sideways orbits; up and down (or a pinch) zooms
+  if (e.ctrlKey) { setZoom(+zoomIn.value * Math.exp(-e.deltaY * 0.01)); return; }   // a pinch (browsers flag it as ctrl)
+  if (e.altKey) { setTilt(camTilt - (e.deltaY || e.deltaX) * TILT_SWIPE); return; }  // ⌥ + up/down: tilt, always
   if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) setOrbit(camOrbit + e.deltaX * ORBIT_SWIPE);
-  else setZoom(+zoomIn.value * Math.exp(-e.deltaY * 0.0015));
+  else if (isMouseWheel(e)) setZoom(+zoomIn.value * Math.exp(-e.deltaY * 0.0015));
+  else setTilt(camTilt - e.deltaY * TILT_SWIPE);                // (fingers down: look down from higher up, as right-drag does)
 }, { passive: false });
 // right-drag turns the camera too — sideways orbits, up and down tilts (right-click isn't used for
 // anything else, so it can't clash with dropping balls, herding or petting). While dragging, your
 // llama ignores the cursor.
 const ORBIT_DRAG = 0.3, ORBIT_SWIPE = 0.12;   // degrees per pixel dragged / per unit swiped
+const TILT_SWIPE = 0.12;                       // degrees of tilt per unit swiped up or down
 function setOrbit(deg) {
   camOrbit = ((deg + 180) % 360 + 360) % 360 - 180;
   orbitIn.value = camOrbit;
@@ -2948,7 +3066,7 @@ const BLIGHT_RAIN = 0.75;        // blight: past this much of the herd gone, it 
 let rainOn = RAIN, rainWait = 40 + Math.random() * 40, rainT = -1, rainLen = 0, rainK = 0; // rainK: 0 dry … 1 heaviest
 let rain = null;
 const rainTint = document.getElementById('rain-tint');
-try { if (localStorage.getItem('llama-rain') === 'off') rainOn = false; } catch {}
+if (saved('llama-rain') === 'off') rainOn = false;
 if (RAIN) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(RAIN_DROPS * 6), 3).setUsage(THREE.DynamicDrawUsage));
@@ -3317,7 +3435,7 @@ function herd(l) {
   line.push(l);
   l.poke(true);                                     // a happy hop (or waking from a nap)
   sfx.herdJoin(l.group.position, line.length);      // sfx:
-  heart(atLlama(l));
+  if (!l.ill()) heart(atLlama(l));                // (blight: not from the sick)
   renderBubble();
 }
 function gatherStep(dt) {
@@ -3404,7 +3522,7 @@ function gatherStep(dt) {
   if (living > 0 && line.length === living) {
     party = 0;
     renderBubble(true);
-    for (const l of llamas) if (!l.fallen) { l.celebrate(); heart(atLlama(l)); } // (blight: not the dead)
+    for (const l of llamas) if (!l.fallen && !l.ill()) { l.celebrate(); heart(atLlama(l)); } // (blight: not the dead or sick)
     sfx.party(player.group.position);               // sfx:
   }
 }
@@ -3430,9 +3548,9 @@ function step(dt) {
   updatePokeTip(dt);                // sfx:
   updateMusic(dt);                  // music:
   gatherStep(dt);
-  if (introOn && !introGo && INTRO_SPIN) setOrbit(camOrbit + INTRO_SPIN * dt); // intro: the slow turn while it waits...
+  if (introOn && !introGo && INTRO_SPIN && INTRO_CUTE) setOrbit(camOrbit + INTRO_SPIN * dt); // intro: the slow turn while it waits...
   if (homing) {                                                                  // ...and the glide home after Play
-    homing.t = Math.min(1, homing.t + dt / ORBIT_HOME_TIME);
+    homing.t = Math.min(1, homing.t + dt / homing.len);
     setOrbit(homing.from + homing.by * smoother(homing.t));
     if (homing.t >= 1) homing = null;
   }
@@ -3456,10 +3574,17 @@ function step(dt) {
 // To turn off: BLIGHT_ON = false. To remove: delete this section, #blight-row in index.html, and
 // the small hooks marked "blight:".
 const BLIGHT = BLIGHT_ON && FIXED_SPEED === null;
-const BLIGHT_MIN = 7;          // ← minutes until even a llama yours never goes near has fallen
-const BLIGHT_EARLY = 0.35;     // ...the first of those fall after this fraction of that (they're staggered)
+// Pacing: each llama has its own time to fall, on the blight's clock (seconds of play). Left alone
+// they're spread from the end of a calm first minute to BLIGHT_SLOW; time spent near yours pulls a
+// llama's time earlier, but never so the herd goes faster than BLIGHT_FAST, and never two too close.
+const BLIGHT_CALM = 45;        // ← seconds of play before anyone can fall
+const BLIGHT_FAST = 3;         // ← however you play, the last of the herd falls between this many minutes...
+const BLIGHT_SLOW = 4.25;      // ← ...and this many
+const BLIGHT_GAP = 15;         // ← seconds at least between one falling and the next (so each gets its moment)
+const BLIGHT_SICK = 60;        // seconds of visible decline before a llama falls
+const INSPECT_LOOK = 4.5;      // seconds a curious one stands looking at a fallen one
 const BLIGHT_NEAR = 8;         // within this of yours (centre to centre) a llama is catching it...
-const BLIGHT_CATCH = 80;       // ← ...and would fall after this many seconds of it (being petted: 4× faster)
+const BLIGHT_PULL = 1;         // ← ...and every second of that brings its time this many seconds closer (petted: 4×)
 const BLIGHT_RECOVER = 15;     // switched off: seconds for a sick llama to get well again
 const BLIGHT_SPEED = parseFloat(params.get('blightspeed') || '1');
 const BLIGHT_GLITCH = 0.35;    // past this (and with a couple fallen), your llama glitches now and then
@@ -3468,34 +3593,49 @@ const BLIGHT_PRINT_LIFE = 7;   // seconds each black print lasts
 const _blackPrint = new THREE.Color(0x111111);
 const burst = { wait: 3, t: 0, k: 0, own: false }; // your llama's glitch bursts
 let blightOn = BLIGHT;
-try { if (localStorage.getItem('llama-blight') === 'off') blightOn = false; } catch {}
+if (saved('llama-blight') === 'off') blightOn = false;
 const wanderers = () => llamas.filter((l) => l !== player);
 // each llama's own pace: some succumb early, some hold out to the end
-const ownRate = (l) => (l.blightRate ??= 1 / (BLIGHT_MIN * 60 * lerp(BLIGHT_EARLY, 1, Math.random())));
+const pace = { t: 0, lastFall: -Infinity };   // the blight's own clock (seconds of play), and when the last one fell
+// give any llama without one a time to fall: spread out (in a shuffled order) between now (or the
+// end of the calm) and BLIGHT_SLOW
+function blightDues(herd) {
+  const fresh = herd.filter((l) => l.due === undefined).sort(() => Math.random() - 0.5);
+  const from = Math.max(pace.t, BLIGHT_CALM) + BLIGHT_GAP, to = Math.max(from + BLIGHT_GAP, BLIGHT_SLOW * 60);
+  fresh.forEach((l, j) => { l.due = from + (to - from) * ((j + 1) / fresh.length) * lerp(0.85, 1, Math.random()); });
+}
 function blightStep(dt) {
   if (!BLIGHT || introOn) return;
   const me = player.group.position, k = dt * BLIGHT_SPEED;
-  let total = 0;
-  const herd = wanderers();
-  for (const l of herd) {
-    l.sick ??= 0;
-    if (blightOn) {
-      if (!l.fallen) {
-        const near = l.followLeader || l.group.position.distanceTo(me) < BLIGHT_NEAR;
-        l.sick = Math.min(1, l.sick + k * (ownRate(l) + (near ? (l.petting ? 4 : 1) / BLIGHT_CATCH : 0)));
-        if (l.sick >= 1) {
-          l.keel();
-          const i = line.indexOf(l);                 // gather: a fallen one leaves the line
-          if (i >= 0) { line.splice(i, 1); l.followTarget = null; l.followLeader = null; renderBubble(); }
-        }
-      }
-    } else {
-      if (l.fallen) l.rise();
-      l.sick = Math.max(0, l.sick - k / BLIGHT_RECOVER);
+  const herd = wanderers(), n = herd.length;
+  blightDues(herd);
+  if (blightOn) {
+    pace.t += k;
+    // near yours (beside it, herded, petted), a llama's time comes sooner...
+    for (const l of herd) if (!l.fallen && (l.followLeader || l.group.position.distanceTo(me) < BLIGHT_NEAR)) l.due -= k * BLIGHT_PULL * (l.petting ? 4 : 1);
+    // ...but the k-th to fall can't go before its place on the fast pace, nor within BLIGHT_GAP of the last
+    const down = herd.filter((l) => l.fallen).length;
+    const next = herd.filter((l) => !l.fallen).sort((a, b) => a.due - b.due)[0];
+    const earliest = BLIGHT_CALM + (BLIGHT_FAST * 60 - BLIGHT_CALM) * (down + 1) / n;
+    if (next) next.due = Math.max(next.due, earliest, pace.lastFall + BLIGHT_GAP);
+    if (next && pace.t >= next.due) {
+      pace.lastFall = pace.t;
+      next.sick = 1;
+      next.keel();
+      const near = herd.filter((o) => o !== next && !o.fallen && o.group.position.distanceTo(next.group.position) < 28)  // one of the others nearby comes to look
+        .sort((a, b) => a.group.position.distanceTo(next.group.position) - b.group.position.distanceTo(next.group.position))[0];
+      if (near) setTimeout(() => near.inspect(next), (KEEL_SWAY + KEEL_TIP + 0.6) * 1000);   // (once it's down)
+      const i = line.indexOf(next);                      // gather: a fallen one leaves the line
+      if (i >= 0) { line.splice(i, 1); next.followTarget = null; next.followLeader = null; renderBubble(); }
     }
-    total += l.fallen ? 1 : l.sick;
+    // how sick each looks: it builds over the BLIGHT_SICK seconds before its time
+    for (const l of herd) if (!l.fallen) l.sick = clamp(1 - (l.due - pace.t) / BLIGHT_SICK, 0, 0.995);
+  } else for (const l of herd) {                         // switched off: they get well (their time moves away)
+    if (l.fallen) { l.rise(); l.due = Math.max(l.due, pace.t + BLIGHT_SICK); }
+    l.due += k * BLIGHT_SICK / BLIGHT_RECOVER;
+    l.sick = clamp(1 - (l.due - pace.t) / BLIGHT_SICK, 0, 0.995);
   }
-  blight = herd.length ? total / herd.length : 0;
+  blight = n ? herd.reduce((a, l) => a + (l.fallen ? 1 : l.sick), 0) / n : 0;
   // your llama glitches: short bursts, more often as it spreads (with the summit's broken hum, no boom)
   const down = herd.filter((l) => l.fallen).length;
   if (blightOn && blight > BLIGHT_GLITCH && down >= 2 && burst.t <= 0 && (burst.wait -= dt) <= 0) {
@@ -3518,12 +3658,13 @@ else {
   });
   // testing: ?blight=0.6 — that much of the herd already sick or fallen (the earliest to go first)
   if (params.has('blight')) {
-    const herd = wanderers().sort((a, b) => ownRate(b) - ownRate(a));
-    let left = clamp(parseFloat(params.get('blight')), 0, 1) * herd.length;
-    for (const l of herd) {
-      l.sick = clamp(left, 0, 1); left -= 1;
-      if (l.sick >= 1) l.keel(true);
-    }
+    const herd = wanderers(), b0 = clamp(parseFloat(params.get('blight')), 0, 1), gone = Math.floor(b0 * herd.length + 1e-6);
+    pace.t = BLIGHT_CALM + b0 * (BLIGHT_FAST * 60 - BLIGHT_CALM);   // (its clock as if it had got this far)
+    pace.lastFall = pace.t - BLIGHT_GAP;
+    herd.forEach((l, i) => {
+      if (i < gone) { l.due = pace.t - 1; l.sick = 1; l.keel(true); }
+      else l.due = pace.t + BLIGHT_GAP * (i - gone + 1) * 1.5;   // the rest close behind
+    });
   }
 }
 
@@ -3584,8 +3725,8 @@ const VOID_NOW = false;        // ← temporary, for testing: true opens it as s
 const VOID = VOID_ON && BLIGHT;
 const VOID_AT = 0.8;           // opens once the blight has spread this far (a few may still be standing)
 const VOID_WAIT = 4;           // ...after this many seconds
-const VOID_GROW = 0.35;        // world units a second it grows by itself (a little faster as it gets bigger)...
-const VOID_WALK = 0.25;        // ...plus this much for every unit your llama walks
+const VOID_GROW = 0.45;        // world units a second it grows by itself (a little faster as it gets bigger)...
+const VOID_WALK = 0.06;        // ...plus this much for every unit your llama walks (a little: it takes about a minute either way)
 const VOID_FALL = 30;          // gravity, for things going over the edge
 const VOID_RUSH = 6;           // how much faster it grows over the last stretch (once it covers ~70% of the view)
 const VOID_DRY = 0.5;          // once it covers this much of the view, the rain eases off
@@ -3678,11 +3819,12 @@ function voidStep(dt) {
     blightIn.disabled = true;                            // blight: no taking it back now
   }
   vd.t += dt;
-  // it grows (more as you walk), and trails after your llama
+  // it grows (more as you walk), and follows your llama (right under it at first, then trailing)
   const walked = Math.hypot(me.x - vd.lx, me.z - vd.lz);
   vd.lx = me.x; vd.lz = me.z;
   if (vd.end < 0) vd.r += ((VOID_GROW + 0.02 * vd.r) * dt + VOID_WALK * walked) * (1 + VOID_RUSH * smooth(0.7, 1, vd.cover)); // (and quickly at the end: no lingering corners)
-  vd.x = damp(vd.x, me.x, 0.6, dt); vd.z = damp(vd.z, me.z, 0.6, dt);
+  const follow = lerp(10, 0.6, smooth(2, 18, vd.r));   // right under it while small, trailing more lazily as it grows
+  vd.x = damp(vd.x, me.x, follow, dt); vd.z = damp(vd.z, me.z, follow, dt);
   // reshape the hole and its walls to the rim; near the end, the walls darken to black
   const R = vd.N + 1, ring = vd.ring.geometry.attributes.position, wall = vd.wall.geometry.attributes.position;
   for (let i = 0; i < R; i++) {
@@ -3781,12 +3923,13 @@ function voidReset() {
   if (paint) { paint.gone = false; paint.blob.visible = true; paint.blob.position.y = 0.01; paint.list.length = 0; }
   // the weather, the blight, the music, all as new
   rainT = -1; rainK = 0; rainWait = RAIN_EVERY[0] + Math.random() * (RAIN_EVERY[1] - RAIN_EVERY[0]);
-  blight = 0; blightGlitch = 0; burst.t = 0; burst.wait = 3;
+  blight = 0; blightGlitch = 0; burst.t = 0; burst.wait = 3; pace.t = 0; pace.lastFall = -Infinity;
   if (glitch.snd) { glitchSoundEnd(glitch.snd); glitch.snd = null; burst.own = false; }
   blightIn.disabled = false;
   if (drone) { for (const o of drone.oscs) o.stop(); drone = null; }
   if (musicLP) musicLP.frequency.value = 12000;
   Object.assign(music, { wait: 1.5, deg: 3, n: 0 });
+  if (!saved('llama-tune')) { tune = randomTune(); tuneIn.value = Object.keys(TUNES).find((k) => TUNES[k] === tune); } // a new tune for the new round
   // the blue butterfly, back
   for (const fl of flies.slice(1)) if (fl.state === 'gone' || fl.state === 'fall') {
     randomGroundPoint(fl.g.position, { x: 0, z: 0 }, 0); fl.g.position.y = 4; fl.g.visible = true; pickFlight(fl);

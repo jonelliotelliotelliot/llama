@@ -11,11 +11,6 @@ html, body { margin: 0; height: 100%; background: #fff; overflow: hidden; oversc
 /* touch: no text-selection, long-press menus or tap highlights getting in the way of holding a llama */
 body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; touch-action: none; }
-#label {
-  position: fixed; top: 20px; left: 24px;
-  font: 15px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-  color: #c8c8c8; user-select: none; pointer-events: none;
-}
 .heart {
   position: fixed; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none;
   animation: heart-float 1.3s ease-out forwards;
@@ -149,14 +144,13 @@ canvas { display: block; touch-action: none; }
 #intro.go #play { visibility: hidden; }
 /* intro: a see-through canvas above the card, where one butterfly keeps flying (main.js, butterflies) */
 #intro-fly { position: fixed; inset: 0; z-index: 21; pointer-events: none; }
-/* ramp: the summit glitch (a 2D canvas over the scene, drawn in main.js) and the lightning flash */
-#glitch { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+/* ramp: the lightning flash */
 #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 1; }
 /* blight: how far it's spread, beside its switch in the panel */
 #blight-pct { margin-left: auto; color: #aaa; font-variant-numeric: tabular-nums; }
 /* void: near the end the label, controls and hints fade away */
-#label, #panel-toggle, #panel, #hint, #herd-bubble { transition: opacity 1.5s; }
-body.void-ui :is(#label, #panel-toggle, #panel, #hint, #herd-bubble) { opacity: 0 !important; pointer-events: none; }
+#panel-toggle, #panel, #hint, #herd-bubble { transition: opacity 1.5s; }
+body.void-ui :is(#panel-toggle, #panel, #hint, #herd-bubble) { opacity: 0 !important; pointer-events: none; }
 /* intro: the cute title (the calm version) — the coral logo over the live scene, a plain Play button */
 #intro.cute { background: none; -webkit-mask: none; mask: none; pointer-events: none; }
 #intro.cute .logo { position: absolute; left: 50%; top: 50%; translate: -50% -60%; width: min(70vw, 720px); pointer-events: none; }
