@@ -123,17 +123,25 @@ canvas { display: block; touch-action: none; }
 /* rain: the light dims a touch during a shower (opacity set from main.js) */
 #rain-tint { position: fixed; inset: 0; background: #34404f; opacity: 0; pointer-events: none; z-index: 1; }
 /* intro: a black title card with "Llama Land" cut out of it, so the scene shows through the type.
-   main.js swells it (--swell) and removes it on the snap. To remove: delete #intro here and in index.html. */
+   The cut-out is drawn once, at the logo's final size, and the swell is a transform (--swell /
+   --swell-end) — scaling a mask's size every frame made iPhones redraw it and jitter. The card is
+   oversized (3× the screen) so it still covers everything at its smallest. main.js sets --swell
+   and removes the card on the snap. To remove: delete #intro here and in index.html. */
 #intro {
-  --logo-w: min(86vw, max(56vw, 300px), 820px); --swell: 0.6;   /* (--swell: as LOGO_START in main.js) */
-  position: fixed; inset: 0; z-index: 20; background: #000;
-  -webkit-mask: url(llama-land.svg) center / calc(var(--logo-w) * var(--swell)) auto no-repeat, linear-gradient(#000 0 0);
+  --logo-w: min(86vw, max(56vw, 300px), 820px);
+  --swell: 0.6; --swell-end: 1;        /* (as LOGO_START and LOGO_END in main.js) */
+  position: fixed; inset: 0; z-index: 20; overflow: hidden;
+}
+#intro .card {
+  position: absolute; inset: -100%; background: #000;
+  transform: scale(calc(var(--swell) / var(--swell-end))); will-change: transform;
+  -webkit-mask: url(llama-land.svg) center / calc(var(--logo-w) * var(--swell-end)) auto no-repeat, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
-  mask: url(llama-land.svg) center / calc(var(--logo-w) * var(--swell)) auto no-repeat, linear-gradient(#000 0 0);
+  mask: url(llama-land.svg) center / calc(var(--logo-w) * var(--swell-end)) auto no-repeat, linear-gradient(#000 0 0);
   mask-composite: exclude;
 }
 /* until main.js has set the title's size, the card is plain black (no letters at the wrong size) */
-#intro:not(.ready) { -webkit-mask: none; mask: none; }
+#intro:not(.ready) .card { -webkit-mask: none; mask: none; }
 #play {
   position: absolute; left: 50%; top: calc(50% + var(--logo-w) * var(--swell) * 0.142 + 7vh); translate: -50% 0;
   display: flex; align-items: center; gap: 10px;
@@ -154,7 +162,8 @@ canvas { display: block; touch-action: none; }
 #panel-toggle, #panel, #hint, #herd-bubble { transition: opacity 1.5s; }
 body.void-ui :is(#panel-toggle, #panel, #hint, #herd-bubble) { opacity: 0 !important; pointer-events: none; }
 /* intro: the cute title (the calm version) — the coral logo over the live scene, a plain Play button */
-#intro.cute { background: none; -webkit-mask: none; mask: none; pointer-events: none; }
+#intro.cute { pointer-events: none; }
+#intro.cute .card { display: none; }
 #intro.cute .logo { position: absolute; left: 50%; top: 50%; translate: -50% -60%; width: min(70vw, 720px); pointer-events: none; }
 #intro.cute .logo :is(svg, img) { display: block; width: 100%; height: auto; overflow: visible; }
 /* each letter pops up from its baseline, one after another */

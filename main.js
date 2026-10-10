@@ -1002,7 +1002,7 @@ const ORBIT_HOME_SPEED = 90;  // ...longer for a long way round: it never turns 
 let homing = null;            // { from, by, t }: the glide home in progress
 const INTRO_SWELL = 2.5;        // seconds the title swells before the snap
 const LOGO_START = 0.6;         // the title's size at first (× its width in style.css, --logo-w; keep --swell there the same)
-const LOGO_END = 1;         // ...and at the moment of the snap
+const LOGO_END = 1;         // ...and at the moment of the snap (keep --swell-end in style.css the same)
 const INTRO_MUSIC_IN = 1.6;   // seconds after the snap before the music starts fading in
 const INTRO_RAIN_CLEAR = 1;   // ...and before the shower starts clearing (gone ~6 s later)
 const INTRO_SHOWER = 1e6;     // (rain: the intro shower's length until the snap gives it an end)
@@ -1014,6 +1014,7 @@ let introLayer = null;         // butterflies: { draw, end } — one drawn above
 if (!INTRO) introEl.remove();
 else {
   introEl.style.setProperty('--swell', LOGO_START);
+  introEl.style.setProperty('--swell-end', LOGO_END);   // (the cut-out's drawn at this size; the swell scales up to it)
   introEl.classList.add('ready');                      // (now the letters can show, at the right size)
   if (INTRO_CUTE) {
     introEl.classList.add('cute');
