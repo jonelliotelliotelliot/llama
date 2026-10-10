@@ -1001,7 +1001,7 @@ const ORBIT_HOME_TIME = 1.2;  // seconds that glide takes at the least (eased in
 const ORBIT_HOME_SPEED = 90;  // ...longer for a long way round: it never turns faster than this (degrees a second)
 let homing = null;            // { from, by, t }: the glide home in progress
 const INTRO_SWELL = 2.5;        // seconds the title swells before the snap
-const LOGO_START = 0.6;         // the title's size at first (× its width in style.css, --logo-w)
+const LOGO_START = 0.6;         // the title's size at first (× its width in style.css, --logo-w; keep --swell there the same)
 const LOGO_END = 1;         // ...and at the moment of the snap
 const INTRO_MUSIC_IN = 1.6;   // seconds after the snap before the music starts fading in
 const INTRO_RAIN_CLEAR = 1;   // ...and before the shower starts clearing (gone ~6 s later)
@@ -1014,6 +1014,7 @@ let introLayer = null;         // butterflies: { draw, end } — one drawn above
 if (!INTRO) introEl.remove();
 else {
   introEl.style.setProperty('--swell', LOGO_START);
+  introEl.classList.add('ready');                      // (now the letters can show, at the right size)
   if (INTRO_CUTE) {
     introEl.classList.add('cute');
     // the logo inline (not an <img>), so each letter can pop in on its own, one after another

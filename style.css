@@ -125,13 +125,15 @@ canvas { display: block; touch-action: none; }
 /* intro: a black title card with "Llama Land" cut out of it, so the scene shows through the type.
    main.js swells it (--swell) and removes it on the snap. To remove: delete #intro here and in index.html. */
 #intro {
-  --logo-w: min(86vw, max(56vw, 300px), 820px); --swell: 1;
+  --logo-w: min(86vw, max(56vw, 300px), 820px); --swell: 0.6;   /* (--swell: as LOGO_START in main.js) */
   position: fixed; inset: 0; z-index: 20; background: #000;
   -webkit-mask: url(llama-land.svg) center / calc(var(--logo-w) * var(--swell)) auto no-repeat, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: url(llama-land.svg) center / calc(var(--logo-w) * var(--swell)) auto no-repeat, linear-gradient(#000 0 0);
   mask-composite: exclude;
 }
+/* until main.js has set the title's size, the card is plain black (no letters at the wrong size) */
+#intro:not(.ready) { -webkit-mask: none; mask: none; }
 #play {
   position: absolute; left: 50%; top: calc(50% + var(--logo-w) * var(--swell) * 0.142 + 7vh); translate: -50% 0;
   display: flex; align-items: center; gap: 10px;
