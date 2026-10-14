@@ -123,23 +123,23 @@ canvas { display: block; touch-action: none; }
 /* rain: the light dims a touch during a shower (opacity set from main.js) */
 #rain-tint { position: fixed; inset: 0; background: #34404f; opacity: 0; pointer-events: none; z-index: 1; }
 /* intro: a black title card with "Llama Land" cut out of it, so the scene shows through the type.
-   The cut-out is drawn once, at the logo's final size, and the swell is a transform (--swell /
-   --swell-end) — scaling a mask's size every frame made iPhones redraw it and jitter. The card is
-   oversized (3× the screen) so it still covers everything at its smallest. main.js sets --swell
-   and removes the card on the snap. To remove: delete #intro here and in index.html. */
+   main.js places the cut-out (--mask-w/x/y): at rest it's sized and positioned so the logo's pixels
+   land on whole screen pixels (crisp), and it grows by resizing it during the swell — except on
+   iPhone/iPad, where resizing a mask every frame jitters, so there (.swell-t) the card is oversized
+   and scaled instead (--k). main.js removes the card on the snap. To remove: delete #intro here and
+   in index.html. */
 #intro {
-  --logo-w: min(86vw, max(56vw, 300px), 820px);
-  --swell: 0.6; --swell-end: 1;        /* (as LOGO_START and LOGO_END in main.js) */
+  --logo-w: min(86vw, max(56vw, 300px), 820px); --swell: 0.6;   /* (--swell: as LOGO_START in main.js) */
   position: fixed; inset: 0; z-index: 20; overflow: hidden;
 }
 #intro .card {
-  position: absolute; inset: -100%; background: #000;
-  transform: scale(calc(var(--swell) / var(--swell-end))); will-change: transform;
-  -webkit-mask: url(llama-land.svg) center / calc(var(--logo-w) * var(--swell-end)) auto no-repeat, linear-gradient(#000 0 0);
+  position: absolute; inset: 0; background: #000;
+  -webkit-mask: url(llama-land.svg) var(--mask-x, 50%) var(--mask-y, 50%) / var(--mask-w, calc(var(--logo-w) * var(--swell))) auto no-repeat, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
-  mask: url(llama-land.svg) center / calc(var(--logo-w) * var(--swell-end)) auto no-repeat, linear-gradient(#000 0 0);
+  mask: url(llama-land.svg) var(--mask-x, 50%) var(--mask-y, 50%) / var(--mask-w, calc(var(--logo-w) * var(--swell))) auto no-repeat, linear-gradient(#000 0 0);
   mask-composite: exclude;
 }
+#intro.swell-t .card { inset: -100%; transform: scale(var(--k, 1)); will-change: transform; }
 /* until main.js has set the title's size, the card is plain black (no letters at the wrong size) */
 #intro:not(.ready) .card { -webkit-mask: none; mask: none; }
 #play {

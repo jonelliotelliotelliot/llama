@@ -1002,7 +1002,9 @@ const ORBIT_HOME_SPEED = 90;  // ...longer for a long way round: it never turns 
 let homing = null;            // { from, by, t }: the glide home in progress
 const INTRO_SWELL = 2.5;        // seconds the title swells before the snap
 const LOGO_START = 0.6;         // the title's size at first (× its width in style.css, --logo-w; keep --swell there the same)
-const LOGO_END = 1;         // ...and at the moment of the snap (keep --swell-end in style.css the same)
+const LOGO_END = 1;         // ...and at the moment of the snap
+const LOGO_CELLS = 468 / 4.26481;  // llama-land.svg is drawn on a grid this many cells wide (kept crisp: whole pixels per cell)
+const SWELL_SCALE = CSS.supports('-webkit-touch-callout', 'none');   // iPhone/iPad (WebKit): the swell scales instead of resizing
 const INTRO_MUSIC_IN = 1.6;   // seconds after the snap before the music starts fading in
 const INTRO_RAIN_CLEAR = 1;   // ...and before the shower starts clearing (gone ~6 s later)
 const INTRO_SHOWER = 1e6;     // (rain: the intro shower's length until the snap gives it an end)
@@ -1013,8 +1015,8 @@ let introOn = INTRO, introGo = false;
 let introLayer = null;         // butterflies: { draw, end } — one drawn above the card (set in that section)
 if (!INTRO) introEl.remove();
 else {
-  introEl.style.setProperty('--swell', LOGO_START);
-  introEl.style.setProperty('--swell-end', LOGO_END);   // (the cut-out's drawn at this size; the swell scales up to it)
+  setSwell(LOGO_START, true);
+  addEventListener('resize', () => { if (introOn && !introGo) setSwell(LOGO_START, true); });
   introEl.classList.add('ready');                      // (now the letters can show, at the right size)
   if (INTRO_CUTE) {
     introEl.classList.add('cute');
@@ -1032,6 +1034,30 @@ else {
   hint.style.opacity = 0;                              // (hints wait for the scene)
   document.getElementById('play').addEventListener('click', introPlay);
   addEventListener('keydown', (e) => { if (introOn && (e.key === 'Enter' || e.key === ' ')) introPlay(); });
+}
+// the dark title's size (s × its width, as in style.css). At rest (crisp): sized so each of the
+// logo's pixels is a whole number of screen pixels, and placed on whole pixels. Swelling: resized
+// smoothly — or, on iPhone/iPad (where resizing a mask jitters), drawn at its final size on an
+// oversized card that's scaled up to it.
+function setSwell(s, rest = false) {
+  introEl.style.setProperty('--swell', s);
+  const vw = innerWidth, vh = innerHeight, dpr = devicePixelRatio || 1, st = introEl.style;
+  const logoW = Math.min(0.86 * vw, Math.max(0.56 * vw, 300), 820);
+  if (!rest && SWELL_SCALE) {
+    if (!introEl.classList.contains('swell-t')) {
+      introEl.classList.add('swell-t');
+      st.setProperty('--mask-w', logoW * LOGO_END + 'px'); st.setProperty('--mask-x', '50%'); st.setProperty('--mask-y', '50%');
+    }
+    st.setProperty('--k', s / LOGO_END);
+    return;
+  }
+  let w = logoW * s;
+  if (rest) w = Math.max(1, Math.round(w * dpr / LOGO_CELLS)) * LOGO_CELLS / dpr;   // whole pixels per cell
+  const h = w * 133 / 468;
+  const x = (vw - w) / 2, y = (vh - h) / 2;
+  st.setProperty('--mask-w', w + 'px');
+  st.setProperty('--mask-x', (rest ? Math.round(x * dpr) / dpr : x) + 'px');
+  st.setProperty('--mask-y', (rest ? Math.round(y * dpr) / dpr : y) + 'px');
 }
 function introPlay() {
   if (introGo) return;
@@ -1053,7 +1079,7 @@ function introPlay() {
   const frame = (now) => {
     const k = clamp((now - t0) / 1000 / INTRO_SWELL, 0, 1);
     if (k >= 1) return introSnap();
-    introEl.style.setProperty('--swell', lerp(LOGO_START, LOGO_END, k * k));  // slow, then faster
+    setSwell(lerp(LOGO_START, LOGO_END, k * k));      // slow, then faster
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
@@ -3889,7 +3915,7 @@ function voidReset() {
   // the title card, as it was
   introOn = true; introGo = false;
   introEl.classList.remove('go');
-  introEl.style.setProperty('--swell', LOGO_START);
+  introEl.classList.remove('swell-t'); setSwell(LOGO_START, true);
   document.body.append(introEl);
   if (flies.length) introFly();
   document.body.classList.remove('void-ui');
