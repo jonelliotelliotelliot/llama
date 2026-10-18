@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as CANNON from 'cannon-es';   // piles: the physics for the toppling stacks
+import { lookSetup } from './look.js?v=2026-10-18';   // look: gradients + grain (delete this and lookSetup below to go back to flat)
 
 // ---------- review params ----------
 // ?speed=4   walk at a fixed speed in profile (camera follows)
@@ -59,12 +60,13 @@ renderer.setClearColor(0xffffff);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+lookSetup(scene, renderer);   // look:
 scene.matrixWorldAutoUpdate = false; // updated once per frame in render(), before the batches are filled
 const BASE_VIEW = 42;
 let VIEW = BASE_VIEW / ZOOM; // world units visible vertically (zoom slider / wheel)
-const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 3000);
 // camera orbits the origin: orbit = angle around, tilt = angle above the ground
-const CAM_DIST = 90;
+const CAM_DIST = 600;   // far back (orthographic, so the view's the same): tilted low and zoomed out, the ground still never reaches the near plane (void: the pit's hidden walls would show)
 let camOrbit = 26.6, camTilt = 29.9;    // matches the original (35, 45, 70) offset
 const CAM_OFFSET = new THREE.Vector3();
 const camDir = new THREE.Vector3();     // unit vector from the scene toward the camera
@@ -3756,6 +3758,7 @@ const VOID_WAIT = 4;           // ...after this many seconds
 const VOID_GROW = 0.45;        // world units a second it grows by itself (a little faster as it gets bigger)...
 const VOID_WALK = 0.06;        // ...plus this much for every unit your llama walks (a little: it takes about a minute either way)
 const VOID_FALL = 30;          // gravity, for things going over the edge
+const VOID_DEPTH = 45;         // ...and how far they fall before they've dwindled away to nothing
 const VOID_RUSH = 6;           // how much faster it grows over the last stretch (once it covers ~70% of the view)
 const VOID_DRY = 0.5;          // once it covers this much of the view, the rain eases off
 const VOID_DARK = [0.55, 0.98];// ...and over this much, the pit darkens to black (and the sound fades)
@@ -3791,7 +3794,11 @@ if (VOID) {
   wallGeo.setIndex(wallIdx);
   vd.wall = new THREE.Mesh(wallGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
   vd.wall.renderOrder = -0.5;                        // after the ground's paint and prints (it covers them in the hole)
-  for (const m of [vd.ring, vd.wall]) { m.frustumCulled = false; m.visible = false; scene.add(m); }
+  // and a floor, far down under the last band, in its colour (looking straight down: no bottom, just dark)
+  vd.floorCol = new THREE.Color(VOID_BANDS.at(-1)[1]);
+  vd.floor = new THREE.Mesh(new THREE.CircleGeometry(1, 64).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: vd.floorCol.clone(), side: THREE.DoubleSide }));
+  vd.floor.renderOrder = -0.5;
+  for (const m of [vd.ring, vd.wall, vd.floor]) { m.frustumCulled = false; m.visible = false; scene.add(m); }
   // what the reset puts back: the toys, the grass, the paint, the ramp
   if (piles) for (const p of (piles.all = piles.pieces.slice())) { p.homeQ = p.body.quaternion.clone(); }
   if (grass) for (const t of grass.tufts) t.home = { x: t.x, z: t.z, s: t.s };
@@ -3807,30 +3814,31 @@ function voidCandidates() {
   for (const l of llamas) if (l !== player && l.fallen && !l.gone) {
     const g = l.group, base = g.quaternion.clone(), y0 = g.position.y;
     out.push({ x: g.position.x, z: g.position.z, size: 3, mark: () => (l.gone = true),
-      set(x, y, z, q) { g.position.set(x, y0 + y, z); g.quaternion.copy(q).multiply(base); } });
+      set(x, y, z, q, k) { g.position.set(x, y0 + y, z); g.quaternion.copy(q).multiply(base); g.scale.setScalar(k); } });
   }
   for (const b of balls) if (!b.gone && !b.claimedBy) {
     out.push({ x: b.pos.x, z: b.pos.z, size: 0.4, mark: () => { b.gone = true; removeBall(b); }, done: () => disposeBall(b),
-      set(x, y, z, q) { b.g.position.set(x, y, z); b.g.quaternion.copy(q); } });
+      set(x, y, z, q, k) { b.g.position.set(x, y, z); b.g.quaternion.copy(q); b.g.scale.setScalar(k); } });
   }
   if (piles) for (const p of piles.pieces) {
     const m = p.mesh, base = m.quaternion.clone(), y0 = m.position.y;
     out.push({ x: m.position.x, z: m.position.z, size: 0.8,
       mark: () => { piles.pieces.splice(piles.pieces.indexOf(p), 1); piles.world.removeBody(p.body); }, done: () => scene.remove(m),
-      set(x, y, z, q) { m.position.set(x, y0 + y, z); m.quaternion.copy(q).multiply(base); } });
+      set(x, y, z, q, k) { m.position.set(x, y0 + y, z); m.quaternion.copy(q).multiply(base); m.scale.setScalar(k); } });
   }
   if (grass) for (const t of grass.tufts) if (!t.gone) {
-    out.push({ x: t.x, z: t.z, size: 0.6, flat: true, mark: () => (t.gone = true), set(x, y, z) { t.x = x; t.z = z; t.y = y; } });
+    const s0 = t.s;
+    out.push({ x: t.x, z: t.z, size: 0.6, flat: true, mark: () => (t.gone = true), set(x, y, z, q, k) { t.x = x; t.z = z; t.y = y; t.s = s0 * Math.max(0.001, k); } });
   }
   if (paint && !paint.gone) {
     const m = paint.blob;
     out.push({ x: m.position.x, z: m.position.z, size: 4, flat: true, mark: () => (paint.gone = true), done: () => (m.visible = false),
-      set(x, y, z) { m.position.set(x, 0.01 + y, z); } });
+      set(x, y, z, q, k) { m.position.set(x, 0.01 + y, z); m.scale.setScalar(Math.max(0.001, k)); } });
   }
   if (ramp && !ramp.gone && !onRamp(player.group.position.x, player.group.position.z, 1)) {
     const g = ramp.group, base = g.quaternion.clone(), r = ramp;
     out.push({ x: ramp.x, z: ramp.z, size: RAMP_LEN / 2, mark: () => (r.gone = true), done: () => { scene.remove(g); voidRamp = r; ramp = null; },
-      set(x, y, z, q) { g.position.set(x, y, z); g.quaternion.copy(q).multiply(base); } });
+      set(x, y, z, q, k) { g.position.set(x, y, z); g.quaternion.copy(q).multiply(base); g.scale.setScalar(Math.max(0.001, k)); } });
   }
   return out;
 }
@@ -3842,7 +3850,7 @@ function voidStep(dt) {
     if (!now && (!blightOn || blight < VOID_AT)) { vd.wait = VOID_WAIT; return; }
     if ((vd.wait -= dt) > 0) return;
     vd.on = voidOpen = true; vd.x = me.x; vd.z = me.z; vd.lx = me.x; vd.lz = me.z; vd.r = 1.5; vd.t = 0;
-    vd.ring.visible = vd.wall.visible = true;
+    vd.ring.visible = vd.wall.visible = vd.floor.visible = true;
     player.setFar(0x000000);                             // its legs go all black
     blightIn.disabled = true;                            // blight: no taking it back now
   }
@@ -3865,6 +3873,8 @@ function voidStep(dt) {
   const dark = 1 - smooth(VOID_DARK[0], VOID_DARK[1], vd.cover), col = vd.wall.geometry.attributes.color;
   for (let i = 0; i < col.array.length; i++) col.array[i] = vd.cols[i] * dark;
   col.needsUpdate = true;
+  vd.floor.position.set(vd.x, -VOID_BANDS.at(-1)[0] + 0.5, vd.z); vd.floor.scale.setScalar(vd.r * 1.2);
+  vd.floor.material.color.copy(vd.floorCol).multiplyScalar(dark);
   if (actx && sfxOut) sfxOut.gain.setTargetAtTime(SFX_VOL * dark, actx.currentTime, 0.3);  // ...and everything goes quiet
   document.body.classList.toggle('void-ui', vd.cover > VOID_DARK[0]);                   // (the label and controls fade away)
   // a llama still standing where it reaches collapses where it stands
@@ -3896,8 +3906,9 @@ function voidStep(dt) {
       f.x += f.vx * dt; f.y += f.vy * dt; f.z += f.vz * dt; f.th += f.w * dt;
     }
     _vq.setFromAxisAngle(f.axis, f.th);
-    f.c.set(f.x, f.y, f.z, _vq);
-    if (f.y < -120) { f.c.done?.(); vd.falling.splice(i, 1); }   // well out of sight
+    const k = clamp(1 + f.y / VOID_DEPTH, 0, 1);           // dwindling into the dark as it falls (no perspective to do it for us)
+    f.c.set(f.x, f.y, f.z, _vq, k);
+    if (k <= 0) { f.c.done?.(); vd.falling.splice(i, 1); }  // gone
   }
   // how much of the view it covers: its radius against the farthest corner of the visible ground
   let far = 0;
@@ -3922,7 +3933,7 @@ function voidReset() {
   if (actx) { sfxOut.gain.cancelScheduledValues(actx.currentTime); sfxOut.gain.setValueAtTime(0, actx.currentTime); } // (held back until Play)
   // the pit closes
   vd.on = voidOpen = false; vd.wait = VOID_WAIT; vd.r = 0; vd.cover = 0; vd.end = -1; vd.falling.length = 0;
-  vd.ring.visible = vd.wall.visible = false;
+  vd.ring.visible = vd.wall.visible = vd.floor.visible = false;
   // a new herd
   for (const l of llamas.slice(1)) l.dispose();
   llamas.length = 1;
@@ -3936,19 +3947,19 @@ function voidReset() {
   for (const b of balls.slice()) { removeBall(b); disposeBall(b); }
   for (const b of loose.splice(0)) disposeBall(b.tr);
   if (voidRamp) { ramp = voidRamp; voidRamp = null; scene.add(ramp.group); }
-  if (ramp) { ramp.gone = false; ramp.group.position.set(ramp.x, 0, ramp.z); ramp.group.quaternion.copy(ramp.home); }
+  if (ramp) { ramp.gone = false; ramp.group.position.set(ramp.x, 0, ramp.z); ramp.group.quaternion.copy(ramp.home); ramp.group.scale.setScalar(1); }
   if (piles) {
     for (const p of piles.all) {
       if (!piles.pieces.includes(p)) piles.world.addBody(p.body);
       p.body.position.copy(p.home); p.body.quaternion.copy(p.homeQ);
       p.body.velocity.set(0, 0, 0); p.body.angularVelocity.set(0, 0, 0); p.body.sleep();
-      scene.add(p.mesh);
+      scene.add(p.mesh); p.mesh.scale.setScalar(1);
     }
     piles.pieces = piles.all.slice(); piles.fallen = piles.fallen.map(() => false); piles.targets.length = 0;
     syncPiles();
   }
   if (grass) for (const t of grass.tufts) { Object.assign(t, t.home); t.y = 0; t.gone = false; }
-  if (paint) { paint.gone = false; paint.blob.visible = true; paint.blob.position.y = 0.01; paint.list.length = 0; }
+  if (paint) { paint.gone = false; paint.blob.visible = true; paint.blob.position.y = 0.01; paint.blob.scale.setScalar(1); paint.list.length = 0; }
   // the weather, the blight, the music, all as new
   rainT = -1; rainK = 0; rainWait = RAIN_EVERY[0] + Math.random() * (RAIN_EVERY[1] - RAIN_EVERY[0]);
   blight = 0; blightGlitch = 0; burst.t = 0; burst.wait = 3; pace.t = 0; pace.lastFall = -Infinity;
